@@ -1,0 +1,56 @@
+# -------------------------
+# Python
+# -------------------------
+
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# -------------------------
+# Secrets
+# -------------------------
+
+.env
+.env.*
+*.key
+*.pem
+secrets/
+credentials/
+
+# -------------------------
+# IDE / OS
+# -------------------------
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -------------------------
+# Temporary files
+# -------------------------
+
+*.tmp
+*.temp
+*.log
+
+# -------------------------
+# Python tooling
+# -------------------------
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# -------------------------
+# Generated knowledge context
+# -------------------------
+
+knowledge/store/ai_context.json
