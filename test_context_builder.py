@@ -1,3 +1,44 @@
+print(
+    "\n=== REPOSITORY ==="
+)
+
+repository = context[
+    "repository"
+]
+
+print(
+    "Branch:",
+    repository["branch"],
+)
+
+print(
+    "Commit:",
+    repository["short_commit"],
+)
+
+print(
+    "Clean:",
+    repository["clean"],
+)
+
+print(
+    "Ahead:",
+    repository["ahead"],
+)
+
+print(
+    "Behind:",
+    repository["behind"],
+)
+
+print(
+    "Changed files:",
+    len(
+        repository[
+            "changed_files"
+        ]
+    ),
+)
 from knowledge.context_builder import (
     save_ai_context,
 )

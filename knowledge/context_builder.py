@@ -3,6 +3,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from knowledge.git_inspector import (
+    inspect_git,
+)
+
+from knowledge.git_sync import (
+    inspect_sync_status,
+)
+
 from knowledge.knowledge_query import (
     get_capabilities,
     get_current_architecture,
@@ -30,19 +38,15 @@ def simplify_event(event):
         "timestamp": event.get(
             "timestamp"
         ),
-
         "type": event.get(
             "event_type"
         ),
-
         "component": event.get(
             "component"
         ),
-
         "description": event.get(
             "description"
         ),
-
         "status": event.get(
             "status"
         ),
@@ -53,16 +57,19 @@ def build_ai_context(
     recent_event_limit=20,
 ):
 
-    # First make sure our stored
-    # architecture matches the
-    # actual codebase.
-
-    # synchronize_project_state()
-
     recent_events = (
         get_recent_events(
             recent_event_limit
         )
+    )
+
+    repository = inspect_git()
+
+    # Do not fetch here.
+    # dev.py already performs the network
+    # synchronization check.
+    sync_status = inspect_sync_status(
+        fetch=False,
     )
 
     context = {
@@ -74,12 +81,53 @@ def build_ai_context(
 
         "project": {
             "name": "AI Agent",
-
             "version":
                 get_current_version(),
-
             "day":
                 get_current_day(),
+        },
+
+        "repository": {
+            "branch":
+                repository.get("branch"),
+
+            "commit":
+                repository.get("commit"),
+
+            "short_commit":
+                repository.get(
+                    "short_commit"
+                ),
+
+            "remote":
+                repository.get("remote"),
+
+            "working_tree_clean":
+                sync_status.get(
+                    "working_tree_clean"
+                ),
+
+            "changed_files":
+                sync_status.get(
+                    "changed_files",
+                    [],
+                ),
+
+            "ahead":
+                sync_status.get("ahead"),
+
+            "behind":
+                sync_status.get("behind"),
+
+            "remote_synchronized":
+                sync_status.get(
+                    "remote_synchronized"
+                ),
+
+            "safe_to_pull":
+                sync_status.get(
+                    "safe_to_pull"
+                ),
         },
 
         "architecture":
