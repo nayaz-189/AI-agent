@@ -14,10 +14,64 @@ from knowledge.state_manager import (
 )
 
 
-def get_tool_names(tools):
+def normalize_tools(tools):
+    """
+    Convert tool data into a stable format
+    so old and new project states can be
+    compared safely.
+    """
+
+    normalized = []
+
+    for tool in tools:
+
+        # Older project states may contain
+        # only tool-name strings.
+        if isinstance(tool, str):
+
+            normalized.append(
+                {
+                    "name": tool,
+                    "description": None,
+                    "risk": None,
+                    "agent": None,
+                    "required_arguments": [],
+                }
+            )
+
+        else:
+
+            normalized.append(
+                {
+                    "name":
+                        tool.get("name"),
+
+                    "description":
+                        tool.get(
+                            "description"
+                        ),
+
+                    "risk":
+                        tool.get("risk"),
+
+                    "agent":
+                        tool.get("agent"),
+
+                    "required_arguments":
+                        sorted(
+                            tool.get(
+                                "required_arguments",
+                                [],
+                            )
+                        ),
+                }
+            )
+
     return sorted(
-        tool["name"]
-        for tool in tools
+        normalized,
+        key=lambda item: (
+            item.get("name") or ""
+        ),
     )
 
 
@@ -26,9 +80,11 @@ def synchronize_project_state():
     state = load_state()
 
     if state is None:
+
         print(
             "Could not load project state."
         )
+
         return False
 
     inspection = inspect_project()
@@ -149,62 +205,49 @@ def synchronize_project_state():
     # TOOLS
     # -------------------------
 
-    old_tools = architecture.get(
-        "tools",
-        [],
-    )
-
-    # Our older state may contain
-    # just tool-name strings.
-
-    if (
-        old_tools
-        and isinstance(
-            old_tools[0],
-            str,
-        )
-    ):
-        old_tool_names = sorted(
-            old_tools
-        )
-
-    else:
-        old_tool_names = (
-            get_tool_names(
-                old_tools
-            )
-        )
-
-    new_tools = inspection["tools"]
-
-    new_tool_names = (
-        get_tool_names(
-            new_tools
+    old_tools = normalize_tools(
+        architecture.get(
+            "tools",
+            [],
         )
     )
 
-    if (
-        old_tool_names
-        != new_tool_names
-    ):
+    new_tools = normalize_tools(
+        inspection["tools"]
+    )
+
+    if old_tools != new_tools:
 
         changes.append(
             {
                 "component": "tools",
-                "before": old_tool_names,
-                "after": new_tool_names,
+                "before": old_tools,
+                "after": new_tools,
             }
         )
 
-    # Store full tool metadata,
-    # not merely their names.
-
-    architecture["tools"] = (
-        new_tools
-    )
+        architecture["tools"] = (
+            new_tools
+        )
 
     # -------------------------
-    # UPDATE TIMESTAMP
+    # NO CHANGES
+    # -------------------------
+
+    if not changes:
+
+        print(
+            "Project state synchronized."
+        )
+
+        print(
+            "Changes detected: 0"
+        )
+
+        return True
+
+    # -------------------------
+    # SAVE ONLY WHEN CHANGED
     # -------------------------
 
     state["last_updated"] = (
@@ -216,7 +259,7 @@ def synchronize_project_state():
     save_state(state)
 
     # -------------------------
-    # RECORD CHANGES
+    # RECORD REAL CHANGES
     # -------------------------
 
     version = (
