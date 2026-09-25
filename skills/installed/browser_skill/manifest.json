@@ -1,0 +1,10 @@
+{
+    "name": "browser_skill",
+    "version": "1.0.0",
+    "description": "Test skill for requesting controlled browser capabilities through the AI Agent capability broker.",
+    "entrypoint": "skill.py",
+    "permissions": [
+        "browser"
+    ],
+    "risk_level": "low"
+}

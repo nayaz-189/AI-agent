@@ -1,0 +1,8 @@
+{
+    "name": "hello_skill",
+    "version": "1.0.0",
+    "description": "A harmless test skill used to verify the AI Agent skill architecture.",
+    "entrypoint": "skill.py",
+    "permissions": [],
+    "risk_level": "low"
+}

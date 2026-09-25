@@ -50,7 +50,33 @@ desktop.ini
 .ruff_cache/
 
 # -------------------------
-# Generated knowledge context
+# Knowledge system - LOCAL / INTERNAL
 # -------------------------
 
+# Runtime historical/current state
+knowledge/store/events.jsonl
+knowledge/store/project_state.json
+
+# Generated internal AI knowledge artifacts
 knowledge/store/ai_context.json
+knowledge/store/source_index.json
+knowledge/store/knowledge_export.json
+knowledge/store/project_context.json
+
+# Canonical knowledge database
+knowledge/database/
+*.db
+*.db-shm
+*.db-wal
+
+# Full internal knowledge bridge
+knowledge/bridge/
+
+# -------------------------
+# External safe AI context
+# -------------------------
+
+# Sanitized publication artifacts are generated locally.
+# They are verified and copied into the separate
+# AI-agent-context repository for external AI access.
+knowledge/exports/
