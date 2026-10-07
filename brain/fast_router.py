@@ -39,11 +39,16 @@ def fast_route(command):
             app = app_result["application"]
 
             return {
-                "tool": "launch_application",
-                "arguments": {
-                    "path": app["path"]
-                }
-            }
+    "tool": "launch_application",
+    "arguments": {
+        "launch_type": app[
+            "launch_type"
+        ],
+        "launch_target": app[
+            "launch_target"
+        ],
+    }
+}
 
         # Multiple possible applications
         if (

@@ -1,0 +1,16 @@
+# AI Agent - direct runtime dependencies
+# Python 3.10 / Windows
+
+# Local LLM integration
+ollama==0.6.2
+
+# HTTP / API access
+requests==2.34.2
+
+# Desktop perception / screenshots
+Pillow==12.3.0
+
+# Windows desktop automation
+pywinauto==0.6.9
+pywin32==312
+comtypes==1.4.17

@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import subprocess
 
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -42,7 +44,11 @@ def get_words(name):
     )
 
 
-def discover_applications():
+def discover_shortcut_applications():
+    """
+    Discover traditional Start Menu .lnk applications.
+    """
+
     applications = []
 
     for location in START_MENU_LOCATIONS:
@@ -55,7 +61,8 @@ def discover_applications():
             applications.append(
                 {
                     "name": shortcut.stem,
-                    "path": str(shortcut),
+                    "launch_type": "shortcut",
+                    "launch_target": str(shortcut),
                     "normalized_name": normalize_name(
                         shortcut.stem
                     ),
@@ -65,7 +72,146 @@ def discover_applications():
     return applications
 
 
+def discover_packaged_applications():
+    """
+    Discover applications exposed by Windows Get-StartApps.
+
+    This includes many packaged/system applications such as
+    Calculator, Notepad, and Microsoft Store applications.
+    """
+
+    powershell_command = (
+        "Get-StartApps | "
+        "Select-Object Name, AppID | "
+        "ConvertTo-Json -Compress"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                powershell_command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as error:
+
+        print(
+            "Packaged application discovery failed:",
+            error,
+        )
+
+        return []
+
+    if result.returncode != 0:
+
+        print(
+            "Packaged application discovery "
+            "returned an error."
+        )
+
+        return []
+
+    output = result.stdout.strip()
+
+    if not output:
+        return []
+
+    try:
+        data = json.loads(output)
+
+    except json.JSONDecodeError:
+
+        print(
+            "Could not parse packaged "
+            "application discovery output."
+        )
+
+        return []
+
+    # PowerShell returns one object instead of
+    # a list when only one application exists.
+
+    if isinstance(data, dict):
+        data = [data]
+
+    if not isinstance(data, list):
+        return []
+
+    applications = []
+
+    for item in data:
+
+        if not isinstance(item, dict):
+            continue
+
+        name = item.get("Name")
+        app_id = item.get("AppID")
+
+        if (
+            not isinstance(name, str)
+            or not isinstance(app_id, str)
+        ):
+            continue
+
+        name = name.strip()
+        app_id = app_id.strip()
+
+        if not name or not app_id:
+            continue
+
+        applications.append(
+            {
+                "name": name,
+                "launch_type": "app_id",
+                "launch_target": app_id,
+                "normalized_name": normalize_name(
+                    name
+                ),
+            }
+        )
+
+    return applications
+
+
+def discover_applications():
+    """
+    Discover applications from all currently supported
+    Windows application sources.
+    """
+
+    applications = []
+
+    applications.extend(
+        discover_shortcut_applications()
+    )
+
+    applications.extend(
+        discover_packaged_applications()
+    )
+
+    return applications
+
+
 def build_application_index():
+    """
+    Build a deduplicated application index.
+
+    If the same application name appears through multiple
+    discovery mechanisms, prefer an AppID because it is a
+    direct Windows application identity.
+    """
+
     applications = discover_applications()
 
     application_index = {}
@@ -76,7 +222,24 @@ def build_application_index():
             "normalized_name"
         ]
 
-        if normalized_name not in application_index:
+        existing = application_index.get(
+            normalized_name
+        )
+
+        if existing is None:
+
+            application_index[
+                normalized_name
+            ] = app
+
+            continue
+
+        if (
+            app["launch_type"] == "app_id"
+            and existing["launch_type"]
+            != "app_id"
+        ):
+
             application_index[
                 normalized_name
             ] = app
@@ -105,6 +268,18 @@ def get_application_index():
     return _APPLICATION_INDEX
 
 
+def refresh_application_index():
+    """
+    Force application discovery to run again.
+    """
+
+    global _APPLICATION_INDEX
+
+    _APPLICATION_INDEX = None
+
+    return get_application_index()
+
+
 def make_acronym(name):
     words = get_words(name)
 
@@ -122,14 +297,6 @@ def generate_aliases(name):
         normalize_name(name),
         make_acronym(name),
     }
-
-    # Example:
-    #
-    # Visual Studio Code
-    #
-    # visualstudiocode
-    # vsc
-    # vscode
 
     if len(words) >= 2:
 
@@ -209,14 +376,6 @@ def find_application(target):
         # -------------------------
         # SINGLE REAL WORD
         # -------------------------
-        #
-        # "ide" matches:
-        # Arduino IDE
-        # Antigravity IDE
-        #
-        # But does not match:
-        # Video Editor
-        #
 
         elif (
             len(target_words) == 1
@@ -267,20 +426,18 @@ def find_application(target):
                 similarity * 100
             )
 
-        # Don't retain extremely
-        # weak candidates.
-
         if score >= 55:
 
             candidates.append(
                 {
                     "name": app["name"],
-                    "path": app["path"],
+                    "launch_type":
+                        app["launch_type"],
+                    "launch_target":
+                        app["launch_target"],
                     "score": score,
                 }
             )
-
-    # Nothing even remotely matched.
 
     if not candidates:
         return None
@@ -299,6 +456,7 @@ def find_application(target):
         print(
             candidate["score"],
             candidate["name"],
+            f"[{candidate['launch_type']}]",
         )
 
     best = candidates[0]
@@ -376,3 +534,24 @@ def find_application(target):
         "status": "resolved",
         "application": best,
     }
+
+
+if __name__ == "__main__":
+
+    for test_target in [
+        "calculator",
+        "notepad",
+        "whatsapp",
+        "vs code",
+    ]:
+
+        print()
+        print(
+            f"Testing: {test_target}"
+        )
+
+        print(
+            find_application(
+                test_target
+            )
+        )
