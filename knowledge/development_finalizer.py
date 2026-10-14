@@ -76,6 +76,7 @@ ALLOWED_TOP_LEVEL_FILES = {
 
 
 ALLOWED_SOURCE_DIRECTORIES = {
+    "execution",
     "agents",
     "brain",
     "desktop",
