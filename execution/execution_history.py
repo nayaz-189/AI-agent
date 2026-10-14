@@ -9,6 +9,17 @@ REDACTED = "[REDACTED]"
 
 
 SENSITIVE_KEYS = {
+    # Runtime intent and tool values can contain personal data even when the
+    # caller does not label them as credentials. Keep structural evidence only.
+    "goal",
+    "url",
+    "target",
+    "launch_target",
+    "text",
+    "new_text",
+    "new_value",
+    "expected_before",
+    "confirmation_token",
     "password",
     "passwd",
     "passcode",

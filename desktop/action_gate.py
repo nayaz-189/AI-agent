@@ -7,6 +7,8 @@ from desktop.semantic_controller import SemanticController
 
 
 ALLOWED_ACTIONS = {
+    "open_calculator",
+    "launch_application",
     "type_text",
     "set_document_text",
     "set_value",
@@ -16,6 +18,8 @@ ALLOWED_ACTIONS = {
 
 
 ACTION_RISK = {
+    "open_calculator": "low",
+    "launch_application": "low",
     "type_text": "medium",
     "set_document_text": "medium",
     "set_value": "medium",
@@ -189,6 +193,23 @@ class DesktopActionGate:
             result["errors"].append(
                 "Request must be a dictionary."
             )
+            return result
+
+        if request.get("action") in ("open_calculator", "launch_application"):
+            from tools.tool_registry import validate_tool_arguments
+
+            result["action"] = request["action"]
+            result["risk"] = "low"
+            try:
+                valid = (
+                    set(request) == {"action", "arguments"}
+                    and validate_tool_arguments(request["action"], request.get("arguments"))
+                )
+            except Exception:
+                valid = False
+            result["valid"] = valid
+            if not valid:
+                result["errors"].append("Invalid or undiscovered application launch.")
             return result
 
         allowed_top_level_fields = {
@@ -682,6 +703,24 @@ class DesktopActionGate:
         result["authorized"] = True
 
         action = request["action"]
+        if action in {"open_calculator", "launch_application"}:
+            from tools.system_tools import _open_calculator, _launch_application
+
+            try:
+                if action == "open_calculator":
+                    dispatched = _open_calculator()
+                else:
+                    dispatched = _launch_application(**request["arguments"])
+                result["executed"] = dispatched is True
+                # This reports dispatch only. Runtime postconditions independently
+                # observe Calculator before completing its task.
+                result["success"] = dispatched is True
+                if not result["success"]:
+                    result["error"] = "Application launch failed."
+            except Exception as exc:
+                result["error"] = f"Application launch failed: {type(exc).__name__}"
+            return result
+
         window_handle = request[
             "window_handle"
         ]

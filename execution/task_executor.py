@@ -155,7 +155,7 @@ class TaskExecutor:
         except Exception as exc:
             raise RuntimeError(
                 "State provider raised "
-                f"{type(exc).__name__}: {exc}"
+                f"{type(exc).__name__}."
             ) from exc
 
         if not isinstance(state, dict):
@@ -253,6 +253,12 @@ class TaskExecutor:
                 ),
             )
 
+        if success and raw_result.get("error") not in (None, ""):
+            return StepExecutionResult(
+                success=False,
+                error=f"{source_name} returned contradictory success and error fields.",
+            )
+
         if success:
 
             return StepExecutionResult(
@@ -305,7 +311,7 @@ class TaskExecutor:
                 success=False,
                 error=(
                     "Local action handler raised "
-                    f"{type(exc).__name__}: {exc}"
+                    f"{type(exc).__name__}."
                 ),
             )
 

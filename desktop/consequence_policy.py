@@ -195,6 +195,23 @@ class ConsequencePolicy:
 
         target = arguments.get("target", {})
 
+        # Launches have no semantic control target. Technical validation still
+        # checks the exact schema and locally discovered application identity.
+        if action == "open_calculator":
+            return make_policy_result(
+                PolicyDecision.ALLOW,
+                reason="Launch the fixed Windows Calculator capability.",
+                consequence="application launch",
+                rule_id="registered-application-launch",
+            )
+        if action == "launch_application":
+            return make_policy_result(
+                PolicyDecision.CONFIRM,
+                reason="Discovery is not authorization; shortcuts can contain commands.",
+                consequence="general application launch",
+                rule_id="application-launch-confirmation",
+            )
+
         if not isinstance(target, dict):
             return make_policy_result(
                 PolicyDecision.UNKNOWN,

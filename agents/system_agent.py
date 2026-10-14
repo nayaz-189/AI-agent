@@ -13,6 +13,10 @@ def can_handle(plan):
 
 
 def handle(plan):
+    from brain.validator import validate_plan
+
+    if not validate_plan(plan) or not can_handle(plan):
+        return False
 
     tool_name = plan["tool"]
     arguments = plan["arguments"]

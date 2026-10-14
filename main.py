@@ -1,9 +1,10 @@
 from brain.planner import understand_command
 from brain.validator import (
     classify_plan,
-    validate_plan,
 )
-from agents.router import route_plan
+from execution.runtime import execute_plan
+from execution.execution_history import ExecutionHistory
+from execution.task_state import TaskStatus
 
 
 def handle_clarification(plan):
@@ -198,9 +199,7 @@ def handle_unsupported(plan):
         "with the currently available tools."
     )
 
-    print(
-        f"Reason: {reason}"
-    )
+    # Do not echo free-form model text which may repeat private user input.
 
 
 def run_agent():
@@ -210,6 +209,7 @@ def run_agent():
 
     print("AI Agent started.")
     print("Type 'exit' to stop.\n")
+    history = ExecutionHistory()
 
     while True:
 
@@ -233,7 +233,11 @@ def run_agent():
         # CREATE PLAN
         # -------------------------
 
-        plan = understand_command(command)
+        try:
+            plan = understand_command(command)
+        except Exception as exc:
+            print(f"Planning failed ({type(exc).__name__}); no action executed.")
+            continue
 
         if not plan:
             print(
@@ -304,65 +308,27 @@ def run_agent():
         # VALIDATE EXECUTABLE PLAN
         # -------------------------
 
-        print(
-            "Plan:",
-            plan,
-        )
-
-        if not validate_plan(plan):
-
-            print(
-                "The requested action "
-                "was rejected."
-            )
-
-            print()
-
-            continue
+        print("Plan received; validating before execution.")
 
         # -------------------------
-        # SELECT AGENT
+        # VALIDATE, CONVERT AND EXECUTE THROUGH THE TASK ENGINE
         # -------------------------
 
-        agent = route_plan(plan)
-
-        if not agent:
-
-            print(
-                "No agent can handle "
-                "this request."
-            )
-
-            print()
-
-            continue
-
-        print(
-            "Selected Agent:",
-            agent.__name__,
-        )
-
-        # -------------------------
-        # EXECUTE
-        # -------------------------
-
-        success = agent.handle(plan)
+        task = execute_plan(command, plan, history=history)
 
         # -------------------------
         # RESULT
         # -------------------------
 
-        if success:
-
-            print(
-                "Action executed successfully."
-            )
-
+        if task.status == TaskStatus.COMPLETED:
+            if task.steps[0].postconditions:
+                print("Calculator is open (independently verified).")
+            else:
+                print("Tool reported success; real-world outcome is not verified.")
+        elif task.status == TaskStatus.WAITING_FOR_USER:
+            print("Blocked: trusted user confirmation is required.")
         else:
-
-            print(
-                "Action failed."
-            )
+            print("Action failed:", task.error)
 
         print()
 

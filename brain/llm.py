@@ -14,15 +14,23 @@ def ask_llm(prompt, model_role="strong"):
 
     model_name = model_data["name"]
 
-    response = ollama.chat(
-        model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        format="json"
-    )
+    if model_data.get("local") is not True or model_data.get("provider") != "ollama":
+        raise ValueError("Runtime planning requires a local Ollama model.")
+
+    # Ignore OLLAMA_HOST and HTTP proxy environment overrides: user commands
+    # must not silently leave the machine through a remote model endpoint.
+    with ollama.Client(
+        host="http://127.0.0.1:11434", trust_env=False, follow_redirects=False,
+    ) as client:
+        response = client.chat(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            format="json"
+        )
 
     return response["message"]["content"]

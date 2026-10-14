@@ -17,33 +17,43 @@ from brain.website_resolver import (
 
 
 def open_youtube():
-    webbrowser.open(
+    return open_website(
         "https://www.youtube.com"
     )
 
 
 def open_google():
-    webbrowser.open(
+    return open_website(
         "https://www.google.com"
     )
 
 
 def open_calculator():
-    """
-    Legacy convenience tool.
+    """Launch the fixed Calculator capability through both desktop gates."""
+    from desktop.desktop_execution_gate import DesktopExecutionGate
 
-    Calculator should normally be launched through
-    the application resolver.
-    """
+    return DesktopExecutionGate().execute({
+        "action": "open_calculator", "arguments": {},
+    }).get("success") is True
+
+
+def _open_calculator():
+    """Private OS primitive; called only after desktop authorization."""
+    import win32api
 
     subprocess.Popen(
-        ["calc.exe"],
+        [os.path.join(win32api.GetSystemDirectory(), "calc.exe")],
         shell=False,
     )
+    return True
 
 
 def open_website(url):
-    webbrowser.open(url)
+    from tools.tool_registry import validate_tool_arguments
+
+    if not validate_tool_arguments("open_website", {"url": url}):
+        return False
+    return webbrowser.open(url) is True
 
 
 def resolve_website(target):
@@ -67,11 +77,9 @@ def resolve_website(target):
             f"Cache hit: {cached_url}"
         )
 
-        webbrowser.open(
+        return open_website(
             cached_url
         )
-
-        return True
 
     # -------------------------
     # SEARCH + IDENTITY
@@ -109,11 +117,9 @@ def resolve_website(target):
             f"{target} -> {resolved_url}"
         )
 
-        webbrowser.open(
+        return open_website(
             resolved_url
         )
-
-        return True
 
     # -------------------------
     # UNCERTAIN RESULT
@@ -137,14 +143,28 @@ def resolve_website(target):
         "Opening search results instead."
     )
 
-    webbrowser.open(
+    return open_website(
         search_url
     )
 
-    return True
-
 
 def launch_application(
+    launch_type,
+    launch_target,
+):
+    """Public launch entry point; never bypass desktop authorization."""
+    from desktop.desktop_execution_gate import DesktopExecutionGate
+
+    return DesktopExecutionGate().execute({
+        "action": "launch_application",
+        "arguments": {
+            "launch_type": launch_type,
+            "launch_target": launch_target,
+        },
+    }).get("success") is True
+
+
+def _launch_application(
     launch_type,
     launch_target,
 ):
@@ -241,6 +261,7 @@ def launch_application(
     # -------------------------
 
     if launch_type == "app_id":
+        import win32api
 
         print(
             "Launching Windows AppID:",
@@ -251,7 +272,7 @@ def launch_application(
 
             subprocess.Popen(
                 [
-                    "explorer.exe",
+                    os.path.join(win32api.GetWindowsDirectory(), "explorer.exe"),
                     (
                         "shell:AppsFolder\\"
                         + launch_target

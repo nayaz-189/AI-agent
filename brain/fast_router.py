@@ -29,6 +29,10 @@ def fast_route(command):
         if not target:
             return None
 
+        # Fixed registered capability: no model-generated executable path.
+        if target in {"calculator", "windows calculator"}:
+            return {"tool": "open_calculator", "arguments": {}}
+
         app_result = find_application(target)
 
         # Confident application match

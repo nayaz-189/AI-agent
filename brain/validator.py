@@ -1,4 +1,4 @@
-from tools.tool_registry import TOOLS
+from tools.tool_registry import TOOLS, validate_tool_arguments
 
 
 ALLOWED_RISK_LEVELS = {
@@ -34,10 +34,7 @@ def validate_plan(plan):
     )
 
     if unexpected_plan_fields:
-        print(
-            "Rejected: unexpected plan field(s): "
-            + ", ".join(sorted(unexpected_plan_fields))
-        )
+        print("Rejected: unexpected plan fields.")
         return False
 
     if "tool" not in plan or "arguments" not in plan:
@@ -60,9 +57,7 @@ def validate_plan(plan):
     tool_data = TOOLS.get(tool_name)
 
     if not tool_data:
-        print(
-            f"Rejected: '{tool_name}' is not an allowed tool."
-        )
+        print("Rejected: tool is not allowed.")
         return False
 
     if not isinstance(arguments, dict):
@@ -96,8 +91,7 @@ def validate_plan(plan):
     if unexpected_arguments:
         print(
             f"Rejected: '{tool_name}' received unexpected "
-            "argument(s): "
-            + ", ".join(sorted(unexpected_arguments))
+            "arguments."
         )
         return False
 
@@ -119,6 +113,13 @@ def validate_plan(plan):
         )
         return False
 
+    try:
+        valid_arguments = validate_tool_arguments(tool_name, arguments)
+    except Exception:
+        valid_arguments = False
+    if not valid_arguments:
+        print("Rejected: invalid tool argument values.")
+        return False
     return True
 
 

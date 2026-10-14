@@ -86,6 +86,9 @@ ALLOWED_SOURCE_DIRECTORIES = {
     "tools",
 }
 
+# One reviewed implementation note, not a blanket docs-directory exception.
+ALLOWED_DOCUMENTATION_FILES = {"docs/runtime-integration.md"}
+
 
 BLOCKED_NAMES = {
     ".env",
@@ -328,6 +331,9 @@ def _classify_path(path):
         return "blocked"
 
     # Top-level file.
+    if normalized in ALLOWED_DOCUMENTATION_FILES:
+        return "source"
+
     if "/" not in normalized:
         if normalized in ALLOWED_TOP_LEVEL_FILES:
             return "source"
@@ -525,6 +531,7 @@ def _compile_project():
         "agents",
         "brain",
         "desktop",
+        "execution",
         "knowledge",
         "providers",
         "skills",

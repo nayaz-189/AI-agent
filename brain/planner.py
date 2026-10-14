@@ -103,12 +103,10 @@ def parse_llm_plan(response):
 
     except (json.JSONDecodeError, TypeError):
         print("LLM returned invalid JSON:")
-        print(response)
         return None
 
     if not isinstance(plan, dict):
         print("LLM returned JSON that is not an object:")
-        print(response)
         return None
 
     return plan

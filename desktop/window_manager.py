@@ -78,7 +78,7 @@ def get_uia_windows():
     return windows
 
 
-def get_win32_windows():
+def get_win32_windows(*, include_titles=True):
     """
     Discover raw top-level Win32 windows.
 
@@ -108,7 +108,7 @@ def get_win32_windows():
                 .GetWindowText(
                     handle
                 )
-            )
+            ) if include_titles else ""
 
             class_name = (
                 win32gui
@@ -157,7 +157,7 @@ def get_win32_windows():
 
         print(
             "Win32 inspection failed:",
-            error,
+            type(error).__name__,
         )
 
     return windows

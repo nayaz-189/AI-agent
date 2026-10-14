@@ -15,7 +15,7 @@ TOOLS = {
     "description": (
         "Launch an already resolved Windows application."
     ),
-    "risk": "low",
+    "risk": "medium",
     "agent": "system",
     "required_arguments": [
         "launch_type",
@@ -28,7 +28,7 @@ TOOLS = {
         "description": (
             "Find and open an installed Windows application."
         ),
-        "risk": "low",
+        "risk": "medium",
         "agent": "system",
         "required_arguments": ["target"],
     },
@@ -38,7 +38,7 @@ TOOLS = {
         "description": (
             "Resolve a website name or description using web search."
         ),
-        "risk": "low",
+        "risk": "medium",
         "agent": "browser",
         "required_arguments": ["target"],
     },
@@ -48,7 +48,7 @@ TOOLS = {
         "description": (
             "Open YouTube in the default browser."
         ),
-        "risk": "low",
+        "risk": "medium",
         "agent": "system",
         "required_arguments": [],
     },
@@ -58,7 +58,7 @@ TOOLS = {
         "description": (
             "Open Google in the default browser."
         ),
-        "risk": "low",
+        "risk": "medium",
         "agent": "system",
         "required_arguments": [],
     },
@@ -78,7 +78,7 @@ TOOLS = {
         "description": (
             "Open a website using a full URL."
         ),
-        "risk": "low",
+        "risk": "medium",
         "agent": "browser",
         "required_arguments": ["url"],
     },
@@ -127,10 +127,48 @@ def get_planner_tool_catalog():
     return catalog
 
 
+def validate_tool_arguments(tool_name, arguments):
+    """Validate values as well as shape at the tool execution boundary."""
+    from urllib.parse import urlsplit
+    from brain.application_resolver import get_application_index
+
+    if not isinstance(tool_name, str) or not isinstance(arguments, dict):
+        return False
+    metadata = TOOLS.get(tool_name)
+    if not metadata or set(arguments) != set(metadata["required_arguments"]):
+        return False
+    if any(not isinstance(value, str) or not value.strip()
+           or any(ord(char) < 32 for char in value)
+           for value in arguments.values()):
+        return False
+    if tool_name == "open_website":
+        try:
+            url = urlsplit(arguments["url"])
+            return (url.scheme in {"http", "https"} and bool(url.hostname)
+                    and url.username is None and url.password is None)
+        except ValueError:
+            return False
+    if tool_name == "launch_application":
+        # The model may select a discovered identity, never supply an OS command.
+        return any(
+            app.get("launch_type") == arguments["launch_type"]
+            and app.get("launch_target") == arguments["launch_target"]
+            for app in get_application_index().values()
+        )
+    return True
+
+
 def execute_tool(tool_name, arguments=None):
 
     if arguments is None:
         arguments = {}
+
+    try:
+        valid = validate_tool_arguments(tool_name, arguments)
+    except Exception:
+        valid = False
+    if not valid:
+        return False
 
     tool_data = TOOLS.get(tool_name)
 
@@ -138,11 +176,19 @@ def execute_tool(tool_name, arguments=None):
         print(f"Tool not found: {tool_name}")
         return False
 
+    # Registry metadata is trusted code; planner confirmation flags are not.
+    # Consequential tools need a future trusted confirmation integration.
+    if tool_data.get("risk") != "low":
+        return False
+
     function = tool_data["function"]
 
-    function(**arguments)
-
-    return True
+    try:
+        outcome = function(**arguments)
+    except Exception:
+        return False
+    # Preserve the boolean agent API, but never infer success from no exception.
+    return outcome is True
 
 
 if __name__ == "__main__":

@@ -116,7 +116,7 @@ class ExecutionRouter:
                 success=False,
                 error=(
                     "Execution backend raised "
-                    f"{type(exc).__name__}: {exc}"
+                    f"{type(exc).__name__}."
                 ),
             )
 
@@ -152,6 +152,12 @@ class ExecutionRouter:
                     "Execution backend result must be "
                     "a dictionary or None."
                 ),
+            )
+
+        if success and raw_result.get("error") not in (None, ""):
+            return RouteResult(
+                success=False,
+                error="Execution backend returned contradictory success and error fields.",
             )
 
         if success:
