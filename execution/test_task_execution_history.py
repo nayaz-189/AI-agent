@@ -354,14 +354,18 @@ def main():
     print("TEST 5: Changed-state evidence")
     test_changed_state_history()
 
+    print("TEST 6: Condition evidence stays private")
+    test_condition_values_do_not_leak_into_history()
+
+    print("TEST 7: Action results stay private")
+    test_action_result_values_are_not_in_event_history()
+
     print()
     print("================================")
     print(" ALL TASK HISTORY TESTS PASSED")
     print("================================")
 
 
-if __name__ == "__main__":
-    main()
 def test_condition_values_do_not_leak_into_history():
     reset()
     private_value = "PRIVATE_CONDITION_SENTINEL_481"
@@ -390,3 +394,7 @@ def test_action_result_values_are_not_in_event_history():
     executor.execute(task)
     assert task.status.value == "completed"
     assert "PRIVATE_RESULT_SENTINEL_483" not in repr(history.all_events())
+
+
+if __name__ == "__main__":
+    main()
