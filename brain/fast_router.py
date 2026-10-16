@@ -13,6 +13,15 @@ def clean_command(command):
 def fast_route(command):
     command = clean_command(command)
 
+    # This narrow local intent avoids sending a desktop request to any model.
+    if command.rstrip(".") in {
+        "open notepad, write a short introduction about artificial intelligence, "
+        "save it to an approved test file, and verify the saved content",
+        "open notepad, write a short introduction about artificial intelligence, "
+        "export it into my approved ai agent test folder, and verify the saved content",
+    }:
+        return {"tool": "write_test_introduction", "arguments": {}}
+
     prefixes = [
         "open ",
         "go to ",

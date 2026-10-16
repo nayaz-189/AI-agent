@@ -5,6 +5,7 @@ from brain.validator import (
 from execution.runtime import execute_plan
 from execution.execution_history import ExecutionHistory
 from execution.task_state import TaskStatus
+from desktop.confirmation_ui import confirm_desktop_request
 
 
 def handle_clarification(plan):
@@ -314,14 +315,16 @@ def run_agent():
         # VALIDATE, CONVERT AND EXECUTE THROUGH THE TASK ENGINE
         # -------------------------
 
-        task = execute_plan(command, plan, history=history)
+        task = execute_plan(command, plan, history=history, confirmation_ui=confirm_desktop_request)
 
         # -------------------------
         # RESULT
         # -------------------------
 
         if task.status == TaskStatus.COMPLETED:
-            if task.steps[0].postconditions:
+            if task.steps[0].agent == "desktop_document":
+                print("Test document edited, exported and independently verified. Notepad remains unsaved.")
+            elif task.steps[0].postconditions:
                 print("Calculator is open (independently verified).")
             else:
                 print("Tool reported success; real-world outcome is not verified.")

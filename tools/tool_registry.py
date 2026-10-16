@@ -9,7 +9,19 @@ from tools.system_tools import (
 )
 
 
+def _document_workflow_requires_runtime():
+    """Composite intent only; direct tool calls cannot authorize mutations."""
+    return False
+
+
 TOOLS = {
+    "write_test_introduction": {
+        "function": _document_workflow_requires_runtime,
+        "description": "Prepare the confirmed Notepad AI introduction and confined test export.",
+        "risk": "medium",
+        "agent": "desktop_document",
+        "required_arguments": [],
+    },
     "launch_application": {
     "function": launch_application,
     "description": (

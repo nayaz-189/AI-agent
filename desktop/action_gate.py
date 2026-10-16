@@ -58,11 +58,14 @@ class DesktopActionGate:
     request passed this technical action/schema gate.
     """
 
-    def __init__(self):
+    def __init__(self, *, document_session=None):
+        self.document_session = document_session
         self.input_controller = InputController()
         self.semantic_controller = (
             SemanticController()
         )
+        if document_session is not None:
+            self.semantic_controller = document_session.semantic_controller()
 
     # -------------------------------------------------
     # Semantic target validation
@@ -194,6 +197,20 @@ class DesktopActionGate:
                 "Request must be a dictionary."
             )
             return result
+
+        if self.document_session is not None:
+            # A session gate exposes only its exact owned document requests.
+            try:
+                valid = self.document_session.validate(request) is True
+            except Exception:
+                valid = False
+            if not valid:
+                result["errors"].append("Document target or precondition rejected.")
+                return result
+            if request["action"] in {"open_test_document", "export_test_document"}:
+                result.update(valid=True, action=request["action"], risk="medium")
+                return result
+            request = {key: value for key, value in request.items() if key != "binding"}
 
         if request.get("action") in ("open_calculator", "launch_application"):
             from tools.tool_registry import validate_tool_arguments
@@ -585,6 +602,14 @@ class DesktopActionGate:
 
         result["execution"] = execution
 
+        # An error or a malformed success flag cannot become semantic success.
+        if (not isinstance(execution, dict) or execution.get("error")
+                or execution.get("success") is not True
+                or execution.get("verified") is not True
+                or not isinstance(execution.get("executed"), bool)):
+            result["error"] = "Semantic execution failed or returned an invalid result."
+            return result
+
         result["executed"] = bool(
             execution.get(
                 "executed",
@@ -703,6 +728,20 @@ class DesktopActionGate:
         result["authorized"] = True
 
         action = request["action"]
+        if action in {"open_test_document", "export_test_document"}:
+            try:
+                if action == "open_test_document":
+                    self.document_session.open(request)
+                    verified = self.document_session.state()["document_empty"]
+                else:
+                    self.document_session.export(request)
+                    verified = self.document_session.state()["file_matches"]
+                result.update(executed=True, verified=verified is True, success=verified is True)
+                if not result["success"]:
+                    result["error"] = "Document operation verification failed."
+            except Exception:
+                result["error"] = "Document operation failed safely."
+            return result
         if action in {"open_calculator", "launch_application"}:
             from tools.system_tools import _open_calculator, _launch_application
 

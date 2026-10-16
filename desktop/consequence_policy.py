@@ -195,6 +195,14 @@ class ConsequencePolicy:
 
         target = arguments.get("target", {})
 
+        if action in {"open_test_document", "export_test_document"}:
+            return make_policy_result(
+                PolicyDecision.CONFIRM,
+                reason="Owned document launch and confined export require user consent.",
+                consequence="test document creation",
+                rule_id="owned-document-confirmation",
+            )
+
         # Launches have no semantic control target. Technical validation still
         # checks the exact schema and locally discovered application identity.
         if action == "open_calculator":

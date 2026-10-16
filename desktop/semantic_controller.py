@@ -243,6 +243,10 @@ class SemanticController:
                     return False
 
             if expected_value is not None:
+                # Only scoped resolvers expose ValuePattern data. Do not read
+                # values from arbitrary/password controls during discovery.
+                if "value" in descriptor:
+                    return str(control.iface_value.CurrentValue) == expected_value
                 if (
                     name
                     != normalize_text(
@@ -612,7 +616,7 @@ class SemanticController:
         result["target"] = descriptor
 
         result["before"] = normalize_text(
-            descriptor["name"]
+            descriptor.get("value", descriptor["name"])
         )
 
         if not descriptor[
@@ -743,7 +747,7 @@ class SemanticController:
 
         result["observed_after"] = (
             normalize_text(
-                observed["name"]
+                observed.get("value", observed["name"])
             )
         )
 

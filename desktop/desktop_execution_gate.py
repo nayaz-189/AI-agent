@@ -35,6 +35,8 @@ class DesktopExecutionGate:
         confirmation_authority: Optional[
             ConfirmationAuthority
         ] = None,
+        *,
+        document_session=None,
     ):
         if confirmation_authority is None:
             confirmation_authority = (
@@ -51,7 +53,7 @@ class DesktopExecutionGate:
             )
         )
 
-        self._action_gate = DesktopActionGate()
+        self._action_gate = DesktopActionGate(document_session=document_session)
 
     @property
     def confirmation_authority(

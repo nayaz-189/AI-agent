@@ -58,7 +58,7 @@ def _registered_backend(expected_agent):
     return execute
 
 
-def execute_plan(command, plan, *, history=None):
+def execute_plan(command, plan, *, history=None, confirmation_ui=None):
     """Validate before conversion; all task policy comes from trusted code.
 
     No approval token, arbitrary handler, or model-supplied condition is accepted.
@@ -77,6 +77,12 @@ def execute_plan(command, plan, *, history=None):
     plan = deepcopy(plan)
     tool_name = plan["tool"].strip()
     metadata = TOOLS[tool_name]
+    if tool_name == "write_test_introduction":
+        from desktop.document_session import NotepadTestSession
+        from execution.document_workflow import INTRODUCTION, execute_document_workflow
+
+        return execute_document_workflow(NotepadTestSession(INTRODUCTION), history=history,
+                                         confirmation_ui=confirmation_ui)
     # Alternative registered launch tools must not evade verification.
     try:
         calculator = _requires_calculator_observation(tool_name, plan["arguments"])
@@ -119,6 +125,7 @@ def execute_plan(command, plan, *, history=None):
     return executor.execute(task)
 
 
-def execute_command(command, *, history=None):
+def execute_command(command, *, history=None, confirmation_ui=None):
     """Non-interactive entry point; ambiguous/unsupported plans fail closed."""
-    return execute_plan(command, understand_command(command), history=history)
+    return execute_plan(command, understand_command(command), history=history,
+                        confirmation_ui=confirmation_ui)

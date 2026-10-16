@@ -559,7 +559,7 @@ class SemanticTargetResolver:
                 target
                 for target in targets
                 if normalize_semantic_text(
-                    target["name"]
+                    target.get("value", target["name"])
                 )
                 == normalized_value
             ]
