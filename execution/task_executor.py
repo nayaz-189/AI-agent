@@ -192,23 +192,12 @@ class TaskExecutor:
         if evaluation.passed:
             return None
 
+        # Never put expected/observed state values or caller-defined keys in
+        # task errors: history and failure reports may retain those strings.
         if evaluation.results:
+            return f"{phase} failed: a required state condition was not satisfied."
 
-            failed = evaluation.results[-1]
-
-            return (
-                f"{phase} failed: "
-                f"type={failed.condition_type}, "
-                f"key={failed.key}, "
-                f"expected={failed.expected!r}, "
-                f"observed={failed.observed!r}, "
-                f"reason={failed.reason}"
-            )
-
-        return (
-            f"{phase} failed: "
-            f"{evaluation.error or 'Unknown condition failure.'}"
-        )
+        return f"{phase} failed: condition evaluation could not complete."
 
     def _normalize_raw_result(
         self,
@@ -485,7 +474,7 @@ class TaskExecutor:
                             task,
                             step=step,
                             details={
-                                "arguments": step.arguments,
+                                "arguments": {key: "[REDACTED]" for key in step.arguments},
                                 "reason": step.error,
                             },
                         )
@@ -519,7 +508,7 @@ class TaskExecutor:
                     task,
                     step=step,
                     details={
-                        "conditions": step.preconditions,
+                        "condition_count": len(step.preconditions),
                     },
                 )
 
@@ -592,7 +581,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "arguments": step.arguments,
+                    "arguments": {key: "[REDACTED]" for key in step.arguments},
                 },
             )
 
@@ -618,7 +607,7 @@ class TaskExecutor:
                     step=step,
                     details={
                         "error": error,
-                        "result": execution_result.result,
+                        "result_present": execution_result.result is not None,
                     },
                 )
 
@@ -655,7 +644,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "result": execution_result.result,
+                    "result_present": execution_result.result is not None,
                 },
             )
 
@@ -670,7 +659,7 @@ class TaskExecutor:
                     task,
                     step=step,
                     details={
-                        "conditions": step.postconditions,
+                        "condition_count": len(step.postconditions),
                     },
                 )
 
@@ -747,7 +736,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "result": step.result,
+                    "result_present": step.result is not None,
                 },
             )
 
