@@ -53,6 +53,12 @@ IGNORED_DIRECTORIES = {
     ".mypy_cache",
     ".ruff_cache",
     "node_modules",
+    ".kilo",
+    ".codex",
+    ".claude",
+    ".cursor",
+    ".opencode",
+    "runtime",
 }
 
 
