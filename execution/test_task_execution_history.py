@@ -362,3 +362,31 @@ def main():
 
 if __name__ == "__main__":
     main()
+def test_condition_values_do_not_leak_into_history():
+    reset()
+    private_value = "PRIVATE_CONDITION_SENTINEL_481"
+    STATE["document"] = private_value
+    history = ExecutionHistory()
+    executor = TaskExecutor(state_provider=state_provider, execution_history=history)
+    task = Task(goal="Safe failed condition", steps=[TaskStep(
+        action="never_executed",
+        preconditions=[{"type": "state_equals", "key": "document", "expected": "EXPECTED_SECRET_482"}],
+    )])
+    executor.execute(task)
+    assert task.status.value == "failed"
+    evidence = repr(history.all_events()) + repr(task.error)
+    assert private_value not in evidence
+    assert "EXPECTED_SECRET_482" not in evidence
+
+
+def test_action_result_values_are_not_in_event_history():
+    reset()
+    history = ExecutionHistory()
+    executor = TaskExecutor(execution_history=history)
+    executor.register_action("sample", lambda arguments: {
+        "success": True, "result": {"unclassified_output": "PRIVATE_RESULT_SENTINEL_483"}
+    })
+    task = Task(goal="Safe result evidence", steps=[TaskStep(action="sample")])
+    executor.execute(task)
+    assert task.status.value == "completed"
+    assert "PRIVATE_RESULT_SENTINEL_483" not in repr(history.all_events())
