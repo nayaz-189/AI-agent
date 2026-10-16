@@ -128,7 +128,7 @@ def test_precondition_failure_report():
 
     assert report.error is not None
 
-    assert "editable" in report.error
+    assert "Precondition failed" in report.error
 
     print("TEST 2: PASSED")
 
