@@ -256,12 +256,7 @@ def test_secret_never_appears_in_history():
         if event["event_type"] == "step_started"
     )
 
-    arguments = (
-        step_started["details"]["arguments"]
-    )
-
-    assert arguments["password"] == REDACTED
-    assert arguments["api_key"] == REDACTED
+    assert "arguments" not in step_started["details"]
 
     print("TEST 4: PASSED")
 

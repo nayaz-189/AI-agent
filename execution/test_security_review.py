@@ -115,7 +115,7 @@ def test_runtime_history_redacts_intent_and_argument_values():
     assert task.status.value == "waiting_for_user"
     evidence = str(history.all_events())
     assert "synthetic-private" not in evidence
-    assert REDACTED in evidence
+    assert "arguments" not in evidence and "goal" not in evidence
 
 
 def test_observer_exception_does_not_leak_into_history_or_errors():
@@ -237,6 +237,7 @@ def test_dry_run_never_calls_finalization_mutations():
             "classify_repository_changes": {"source": ["main.py"], "blocked": [], "unknown": []},
             "_verify_core_repository": None, "_verify_context_repository": None,
             "_compile_project": {"passed": True}, "_check_dependencies": {"passed": True},
+            "_run_security_regressions": {"passed": True},
         }.items():
             stack.enter_context(patch.object(finalizer, name, return_value=value))
         mutations = [stack.enter_context(patch.object(finalizer, name)) for name in (

@@ -7,6 +7,8 @@ from execution.task_state import (
     TaskStatus,
 )
 from execution.task_step import TaskStep
+from execution.safe_failure import safe_message, safe_result, MESSAGES, ErrorCode
+from execution.audit_schema import safe_id
 
 
 def generate_task_id() -> str:
@@ -87,7 +89,7 @@ class Task:
             )
 
         self.status = TaskStatus.WAITING_FOR_USER
-        self.error = reason.strip()
+        self.error = MESSAGES[ErrorCode.CONFIRMATION_REQUIRED]
 
     def resume(self) -> None:
         if self.status != TaskStatus.WAITING_FOR_USER:
@@ -141,7 +143,7 @@ class Task:
             )
 
         self.status = TaskStatus.FAILED
-        self.error = error.strip()
+        self.error = safe_message(error)
 
     def get_current_step(self) -> Optional[TaskStep]:
         if self.current_step_index >= len(self.steps):
@@ -172,14 +174,14 @@ class Task:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "task_id": self.task_id,
-            "goal": self.goal,
+            "task_id": safe_id(self.task_id),
+            "goal": "[REDACTED]",
             "status": self.status.value,
             "current_step_index": self.current_step_index,
             "steps": [
                 step.to_dict()
                 for step in self.steps
             ],
-            "result": self.result,
-            "error": self.error,
+            "result": safe_result(self.result),
+            "error": safe_message(self.error) if self.error else None,
         }

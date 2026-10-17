@@ -15,6 +15,13 @@ def _document_workflow_requires_runtime():
 
 
 TOOLS = {
+    "research_and_save_report": {
+        "function": _document_workflow_requires_runtime,
+        "description": "Research the fixed Python AST/pathlib sources and export a user-confirmed Notepad report.",
+        "risk": "medium",
+        "agent": "orchestrator",
+        "required_arguments": [],
+    },
     "write_test_introduction": {
         "function": _document_workflow_requires_runtime,
         "description": "Prepare the confirmed Notepad AI introduction and confined test export.",

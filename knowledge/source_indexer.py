@@ -1,5 +1,7 @@
 import ast
 import json
+import os
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -59,7 +61,41 @@ IGNORED_DIRECTORIES = {
     ".cursor",
     ".opencode",
     "runtime",
+    "build", "dist", "tmp", "temp", "tests_tmp", ".tox", ".nox",
 }
+
+# Project-owned roots only; never discover arbitrary top-level worktrees.
+SOURCE_ROOTS = {"agents", "brain", "desktop", "execution", "knowledge", "tools", "providers", "skills"}
+ROOT_FILES = {"main.py", "dev.py", "benchmark_models.py", "initialize_project_state.py",
+              "publish_context.py", "refresh_knowledge.py", "start_day_10.py",
+              "test_app_launch.py", "test_apps.py", "test_canonical_recorder.py", "test_context_builder.py",
+              "test_development_recorder.py", "test_git_inspector.py", "test_git_sync.py",
+              "test_knowledge_query.py", "test_llm.py", "test_memory.py", "test_project_inspector.py",
+              "test_session_manager.py", "test_skill_registration.py", "test_state_sync.py", "test_tavily.py"}
+# Only these existing nested skill sources belong to the inventory.
+NESTED_SOURCE_DIRS = {"skills/installed", "skills/workspace", "skills/installed/hello_skill",
+                      "skills/installed/browser_skill", "skills/workspace/hello_skill", "skills/workspace/browser_skill"}
+
+
+def source_path_allowed(relative):
+    from pathlib import PurePosixPath
+    if not isinstance(relative, str) or "\\" in relative or ":" in relative:
+        return False
+    path = PurePosixPath(relative)
+    if path.is_absolute() or ".." in path.parts or str(path) != relative or path.suffix != ".py":
+        return False
+    if len(path.parts) == 1:
+        return relative in ROOT_FILES
+    return (path.parts[0] in SOURCE_ROOTS and
+            (len(path.parts) == 2 or str(path.parent) in NESTED_SOURCE_DIRS))
+
+
+def is_link_or_reparse(path):
+    try:
+        info = path.lstat()
+        return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+    except OSError:
+        return True
 
 
 # ============================================================
@@ -90,10 +126,10 @@ def should_ignore(path):
     except ValueError:
         return True
 
-    return any(
-        part in IGNORED_DIRECTORIES
-        for part in parts
-    )
+    return (any(part.lower() in IGNORED_DIRECTORIES for part in parts)
+            or not source_path_allowed("/".join(parts))
+            or any(is_link_or_reparse(parent) for parent in (path, *path.parents)
+                   if parent == PROJECT_ROOT or PROJECT_ROOT in parent.parents))
 
 
 # ============================================================
@@ -107,11 +143,35 @@ def format_default_value(node):
     No code is executed.
     """
 
-    try:
-        return ast.unparse(node)
+    return "<default>"
 
-    except Exception:
-        return "<unavailable>"
+
+def read_source(path):
+    """Check the opened object before reading; refuse links and hardlinks."""
+    if should_ignore(path):
+        raise ValueError("Source path is not approved.")
+    if os.name != "nt":
+        if path.stat().st_nlink != 1:
+            raise ValueError("Linked source is forbidden.")
+        return path.read_text(encoding="utf-8")
+    import win32file
+    import win32con
+    handle = win32file.CreateFile(str(path), win32con.GENERIC_READ, win32con.FILE_SHARE_READ,
+                                  None, win32con.OPEN_EXISTING, 0x00200000, None)
+    try:
+        info = win32file.GetFileInformationByHandle(handle)
+        actual = win32file.GetFinalPathNameByHandle(handle, 0)
+        expected = os.path.normcase(os.path.abspath(path))
+        if (info[0] & 0x400 or info[7] != 1
+                or os.path.normcase(actual.removeprefix("\\\\?\\")) != expected):
+            raise ValueError("Redirected source is forbidden.")
+        size = (info[5] << 32) | info[6]
+        if size > 2_000_000:
+            raise ValueError("Source file exceeds indexing limit.")
+        data = win32file.ReadFile(handle, size)[1] if size else b""
+        return data.decode("utf-8")
+    finally:
+        handle.Close()
 
 
 def extract_arguments(arguments):
@@ -326,6 +386,8 @@ def inspect_python_file(path):
     Inspect one Python file without importing or executing it.
     """
 
+    if should_ignore(path):
+        raise ValueError("Source path is not approved.")
     record = {
         "path": relative_path(path),
         "parse_success": False,
@@ -337,14 +399,12 @@ def inspect_python_file(path):
 
     try:
 
-        source = path.read_text(
-            encoding="utf-8"
-        )
+        source = read_source(path)
 
     except Exception as error:
 
         record["error"] = (
-            f"Read failed: {error}"
+            "Source read failed."
         )
 
         return record
@@ -359,7 +419,7 @@ def inspect_python_file(path):
     except SyntaxError as error:
 
         record["error"] = (
-            f"Syntax error: {error}"
+            "Source syntax is invalid."
         )
 
         return record
@@ -467,14 +527,17 @@ def discover_python_files():
 
     files = []
 
-    for path in PROJECT_ROOT.rglob(
-        "*.py"
-    ):
-
-        if should_ignore(path):
+    candidates = [PROJECT_ROOT / name for name in ROOT_FILES]
+    for directory in sorted(SOURCE_ROOTS | NESTED_SOURCE_DIRS):
+        root = PROJECT_ROOT / directory
+        if not root.is_dir() or any(is_link_or_reparse(p) for p in (root, *root.parents)
+                                   if p == PROJECT_ROOT or PROJECT_ROOT in p.parents):
             continue
-
-        files.append(path)
+        candidates.extend(root.glob("*.py"))  # Deliberately non-recursive.
+    for path in candidates:
+        if not should_ignore(path) and path.is_file():
+            files.append(path)
+    files = list(set(files))
 
     return sorted(
         files,

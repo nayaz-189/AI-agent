@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
 from uuid import uuid4
+from execution.audit_schema import safe_id
 
 from execution.failure_analyzer import (
     FailureAnalysis,
@@ -79,12 +80,12 @@ class RecoveryProposal:
     def to_dict(self) -> Dict[str, Any]:
 
         return {
-            "proposal_id": self.proposal_id,
+            "proposal_id": safe_id(self.proposal_id),
             "proposal_type": self.proposal_type.value,
-            "original_task_id": self.original_task_id,
-            "failed_step_id": self.failed_step_id,
-            "reason": self.reason,
-            "recommended_goal": self.recommended_goal,
+            "original_task_id": safe_id(self.original_task_id),
+            "failed_step_id": safe_id(self.failed_step_id),
+            "reason": "Recovery proposal: " + self.proposal_type.value,
+            "recommended_goal": "Create a newly validated plan." if self.requires_new_plan else None,
             "requires_new_plan": self.requires_new_plan,
         }
 

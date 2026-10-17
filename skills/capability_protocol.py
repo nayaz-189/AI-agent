@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+from enum import Enum
+import re
+
+
 # ============================================================
 # AI AGENT CAPABILITY REQUEST PROTOCOL
 # ============================================================
@@ -118,12 +123,7 @@ def validate_capability_request(
             "valid": False,
             "reason": (
                 "Capability request contains "
-                "unexpected fields: "
-                + ", ".join(
-                    sorted(
-                        unexpected_fields
-                    )
-                )
+                "unexpected fields."
             ),
         }
 
@@ -297,8 +297,65 @@ def validate_capability_request(
 
 
 # ============================================================
-# DEVELOPMENT TEST
+# NON-EXECUTING ISOLATED BROKER CONTRACT
 # ============================================================
+
+class BrokerCapability(str, Enum):
+    OPEN_CALCULATOR = "open_calculator"
+    WRITE_TEST_INTRODUCTION = "write_test_introduction"
+
+
+@dataclass(frozen=True)
+class BrokerRequest:
+    """Data-only v2 envelope, NOT an authorization or an OS caller identity.
+
+    No paths, prose, code, permissions, tokens, or caller identity are accepted.
+    Resource IDs must eventually be resolved against broker-owned objects.
+    The broker must recompute the digest before seeking exact-action consent.
+    """
+    request_id: str
+    capability: BrokerCapability
+    resource_id: str
+    action_digest: str
+
+    def __post_init__(self):
+        if (not isinstance(self.capability, BrokerCapability)
+                or any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{32}", value) is None
+                       for value in (self.request_id, self.resource_id))
+                or not isinstance(self.action_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", self.action_digest) is None):
+            raise ValueError("Invalid broker request.")
+
+    @classmethod
+    def parse(cls, value):
+        if (type(value) is not dict or set(value) != {
+                "version", "request_id", "capability", "resource_id", "action_digest"}
+                or value["version"] != "2.0"):
+            raise ValueError("Invalid broker request.")
+        try:
+            return cls(value["request_id"], BrokerCapability(value["capability"]),
+                       value["resource_id"], value["action_digest"])
+        except (ValueError, TypeError):
+            raise ValueError("Invalid broker request.") from None
+
+
+@dataclass(frozen=True)
+class BrokerResponse:
+    """Preflight can only deny until authenticated IPC and isolation exist."""
+    request_id: str | None
+    error_code: str
+
+    def __post_init__(self):
+        if (self.request_id is not None and (not isinstance(self.request_id, str)
+                or re.fullmatch(r"[0-9a-f]{32}", self.request_id) is None)):
+            raise ValueError("Invalid broker response.")
+        if self.error_code not in ("invalid_request", "backend_unavailable"):
+            raise ValueError("Invalid broker response.")
+
+    def to_dict(self):
+        return {"version": "2.0", "request_id": self.request_id, "success": False,
+                "executed": False, "verified": False, "error_code": self.error_code}
+
 
 if __name__ == "__main__":
 

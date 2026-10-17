@@ -1,13 +1,14 @@
-from knowledge.canonical_recorder import (
-    record_event,
-)
+from execution.execution_history import ExecutionEvent, ExecutionHistory
+
+
+CAPABILITY_HISTORY = ExecutionHistory()
 
 
 # ============================================================
 # AI AGENT CAPABILITY AUDIT
 # ============================================================
 #
-# Permanent audit trail for skill capability activity.
+# In-memory structural audit trail for skill capability activity.
 #
 # Records:
 # - skill identity
@@ -149,45 +150,15 @@ def record_capability_attempt(
     This function NEVER executes a capability.
     """
 
-    safe_arguments = sanitize_arguments(
-        arguments
-    )
-
-    # Determine audit status automatically unless
-    # the caller explicitly provides one.
-
-    if status is None:
-
-        status = (
-            "executed"
-            if executed
-            else "blocked"
-        )
-
-    metadata = {
-        "skill": skill_name,
-        "capability": capability,
-        "executed": bool(executed),
-        "reason": reason,
-        "arguments": safe_arguments,
-        "risk": risk,
-    }
-
-    description = (
-        f"Skill '{skill_name}' requested "
-        f"capability '{capability}': "
-        f"{status}."
-    )
-
     try:
-
-        event_id = record_event(
-            event_type="capability_execution",
-            component="skill_system",
-            description=description,
-            status=status,
-            metadata=metadata,
+        event = ExecutionEvent(
+            event_type="action_succeeded" if executed is True else "action_failed",
+            task_id=skill_name if isinstance(skill_name, str) and skill_name else "unknown",
+            action=capability,
+            details={"result_present": executed is True},
         )
+        CAPABILITY_HISTORY.record(event)
+        event_id = event.event_id
 
     except Exception as error:
 
@@ -195,8 +166,7 @@ def record_capability_attempt(
             "recorded": False,
             "event_id": None,
             "reason": (
-                "Capability audit recording failed: "
-                f"{error}"
+                "Capability audit recording failed."
             ),
         }
 
@@ -205,7 +175,7 @@ def record_capability_attempt(
         "event_id": event_id,
         "reason": (
             "Capability attempt recorded "
-            "in canonical knowledge."
+            "in memory."
         ),
     }
 

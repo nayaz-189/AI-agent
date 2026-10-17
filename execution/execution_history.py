@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from execution.audit_schema import EVENTS, event_details, safe_action, safe_agent, safe_id
 
 
 REDACTED = "[REDACTED]"
@@ -70,13 +71,13 @@ def sanitize_for_history(
     value: Any,
 ) -> Any:
     """
-    Create a sanitized copy of execution data before it enters history.
+    Legacy key redactor retained for callers; NOT an audit/export boundary.
 
     Key-based secret redaction is deliberately conservative.
 
     Important:
     This is not yet a complete secret-detection system.
-    Schema-aware sensitivity metadata will be added later.
+    ExecutionEvent enforces audit_schema independently; use that for audit data.
     """
 
     if isinstance(value, dict):
@@ -122,6 +123,18 @@ def utc_timestamp() -> str:
     return datetime.now(
         timezone.utc
     ).isoformat()
+
+
+def safe_timestamp(value) -> str:
+    """Retain evidence time across copies, accepting only canonical UTC times."""
+    if isinstance(value, str) and len(value) <= 32:
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.utcoffset() == timezone.utc.utcoffset(None):
+                return parsed.isoformat()
+        except ValueError:
+            pass
+    return utc_timestamp()
 
 
 @dataclass(frozen=True)
@@ -171,22 +184,25 @@ class ExecutionEvent:
         object.__setattr__(
             self,
             "event_type",
-            self.event_type.strip(),
+            self.event_type.strip() if self.event_type.strip() in EVENTS else "unknown_event",
         )
 
         object.__setattr__(
             self,
             "task_id",
-            self.task_id.strip(),
+            safe_id(self.task_id.strip()),
         )
 
         object.__setattr__(
             self,
             "details",
-            sanitize_for_history(
-                self.details
-            ),
+            event_details(self.event_type, self.details),
         )
+        object.__setattr__(self, "step_id", safe_id(self.step_id))
+        object.__setattr__(self, "event_id", safe_id(self.event_id))
+        object.__setattr__(self, "agent", safe_agent(self.agent))
+        object.__setattr__(self, "action", safe_action(self.action))
+        object.__setattr__(self, "timestamp", safe_timestamp(self.timestamp))
 
     def to_dict(self) -> Dict[str, Any]:
 
@@ -198,9 +214,7 @@ class ExecutionEvent:
             "step_id": self.step_id,
             "agent": self.agent,
             "action": self.action,
-            "details": sanitize_for_history(
-                self.details
-            ),
+            "details": event_details(self.event_type, self.details),
         }
 
 
@@ -238,9 +252,7 @@ class ExecutionHistory:
             step_id=event.step_id,
             agent=event.agent,
             action=event.action,
-            details=sanitize_for_history(
-                event.details
-            ),
+            details=event_details(event.event_type, event.details),
             event_id=event.event_id,
             timestamp=event.timestamp,
         )
@@ -266,7 +278,7 @@ class ExecutionHistory:
         return [
             event.to_dict()
             for event in self._events
-            if event.task_id == task_id
+            if event.task_id == safe_id(task_id)
         ]
 
     def events_for_step(
@@ -277,7 +289,7 @@ class ExecutionHistory:
         return [
             event.to_dict()
             for event in self._events
-            if event.step_id == step_id
+            if event.step_id == safe_id(step_id)
         ]
 
     def count(

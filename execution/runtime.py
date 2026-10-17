@@ -11,6 +11,7 @@ from execution.task import Task
 from execution.task_executor import TaskExecutor
 from execution.task_step import TaskStep
 from tools.tool_registry import TOOLS
+from execution.safe_failure import ErrorCode, MESSAGES
 
 
 def _is_calculator_application(application):
@@ -67,7 +68,7 @@ def execute_plan(command, plan, *, history=None, confirmation_ui=None):
     history = history if history is not None else ExecutionHistory()
     task = Task(goal=command)
     if not validate_plan(plan):
-        task.mark_failed("Plan validation rejected the request; no action executed.")
+        task.mark_failed(MESSAGES[ErrorCode.INVALID_REQUEST])
         history.record(ExecutionEvent(
             event_type="plan_rejected", task_id=task.task_id,
             details={"error": task.error},
@@ -77,6 +78,9 @@ def execute_plan(command, plan, *, history=None, confirmation_ui=None):
     plan = deepcopy(plan)
     tool_name = plan["tool"].strip()
     metadata = TOOLS[tool_name]
+    if tool_name == "research_and_save_report":
+        from execution.orchestrator import execute_orchestration
+        return execute_orchestration(plan, history=history, confirmation_ui=confirmation_ui)
     if tool_name == "write_test_introduction":
         from desktop.document_session import NotepadTestSession
         from execution.document_workflow import INTRODUCTION, execute_document_workflow
@@ -87,7 +91,7 @@ def execute_plan(command, plan, *, history=None, confirmation_ui=None):
     try:
         calculator = _requires_calculator_observation(tool_name, plan["arguments"])
     except Exception:
-        task.mark_failed("Application identity could not be established; no action executed.")
+        task.mark_failed(MESSAGES[ErrorCode.INVALID_REQUEST])
         history.record(ExecutionEvent(
             event_type="plan_rejected", task_id=task.task_id,
             details={"error": task.error},

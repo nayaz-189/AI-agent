@@ -4,6 +4,7 @@ from execution.execution_history import (
     REDACTED,
     sanitize_for_history,
 )
+from execution.audit_schema import safe_id
 
 
 def test_basic_event_recording():
@@ -32,12 +33,10 @@ def test_basic_event_recording():
     )
 
     assert events[0]["task_id"] == (
-        "task_test"
+        safe_id("task_test")
     )
 
-    assert events[0]["details"]["value"] == (
-        "Hello"
-    )
+    assert events[0]["details"] == {}
 
     print("TEST 1: PASSED")
 
@@ -173,21 +172,8 @@ def test_history_contains_only_redacted_event():
     assert "HISTORY_SECRET" not in serialized
     assert "HISTORY_TOKEN" not in serialized
 
-    arguments = (
-        events[0]
-        ["details"]
-        ["arguments"]
-    )
-
-    assert (
-        arguments["password"]
-        == REDACTED
-    )
-
-    assert (
-        arguments["auth_token"]
-        == REDACTED
-    )
+    assert events[0]["details"] == {}
+    assert events[0]["action"] is None
 
     print("TEST 5: PASSED")
 

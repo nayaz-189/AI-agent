@@ -1,9 +1,19 @@
 from tools.tool_registry import TOOLS
+from skills.capability_protocol import BrokerRequest, BrokerResponse
+from skills.argument_validator import validate_capability_arguments
 
-from skills.argument_validator import (
-    validate_capability_arguments,
-)
 
+def preflight_isolated_request(message):
+    """Validate the future wire contract, then deny. No worker is connected.
+
+    A model-supplied name/identity cannot substitute for authenticated IPC.
+    Replayed envelopes also remain denied; this is not a replay-safe executor.
+    """
+    try:
+        request = BrokerRequest.parse(message)
+    except (ValueError, TypeError):
+        return BrokerResponse(None, "invalid_request")
+    return BrokerResponse(request.request_id, "backend_unavailable")
 
 # ============================================================
 # AI AGENT CAPABILITY BROKER

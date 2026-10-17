@@ -156,7 +156,8 @@ def test_backend_failure_propagates():
 
     assert result.success is False
     assert len(CALLS) == 1
-    assert result.error == "Simulated backend failure."
+    assert result.error == "Execution failed."
+    assert result.failure.code.value == "execution_failed"
 
     print("TEST 4: PASSED")
 

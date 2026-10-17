@@ -11,6 +11,14 @@ class ConditionResult:
     expected: Any = None
     observed: Any = None
 
+    def __post_init__(self):
+        # Values are compared locally, never retained in diagnostic results.
+        object.__setattr__(self, "key", None)
+        object.__setattr__(self, "expected", None)
+        object.__setattr__(self, "observed", None)
+        if self.condition_type not in {"state_equals", "state_not_equals", "value_exists", "invalid"}:
+            object.__setattr__(self, "condition_type", "unknown")
+
 
 @dataclass(frozen=True)
 class ConditionSetResult:

@@ -70,10 +70,10 @@ def test_execution_failure_report():
         "execution"
     )
 
-    assert report.action == "fail"
+    assert report.action is None  # Arbitrary local labels are not public identities.
 
     assert report.error == (
-        "Simulated execution failure."
+        "Execution failed."
     )
 
     print("TEST 1: PASSED")
@@ -124,7 +124,7 @@ def test_precondition_failure_report():
         "precondition"
     )
 
-    assert report.action == "write"
+    assert report.action is None
 
     assert report.error is not None
 

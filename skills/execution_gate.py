@@ -15,6 +15,8 @@ from skills.runtime_manager import (
 from tools.tool_registry import (
     execute_tool,
 )
+from execution.audit_schema import safe_id, safe_action
+from execution.safe_failure import ErrorCode, MESSAGES
 
 
 # ============================================================
@@ -44,7 +46,7 @@ from tools.tool_registry import (
 #     ↓
 # Controlled execution
 #     ↓
-# Canonical audit record
+# In-memory structural audit record
 #
 # ============================================================
 
@@ -66,7 +68,7 @@ def build_audited_result(
 ):
     """
     Create a standard execution result and record the
-    capability attempt in canonical knowledge.
+    capability attempt in memory without payloads or backend prose.
 
     Audit failure is reported in the result but does not
     change whether the capability itself executed.
@@ -83,24 +85,12 @@ def build_audited_result(
     )
 
     result = {
-        "executed": executed,
-        "skill": skill_name,
-        "capability": capability,
-        "reason": reason,
+        "executed": executed is True,
+        "skill": safe_id(skill_name),
+        "capability": safe_action(capability),
+        "reason": "Capability executed." if executed is True else MESSAGES[ErrorCode.PERMISSION_DENIED],
         "audit": audit,
     }
-
-    if arguments is not None:
-
-        result["arguments"] = arguments
-
-    if risk is not None:
-
-        result["risk"] = risk
-
-    if extra:
-
-        result.update(extra)
 
     return result
 
@@ -264,184 +254,11 @@ def execute_skill_capability(
     The caller does NOT supply permissions.
     """
 
-    if arguments is None:
-        arguments = {}
-
-    # --------------------------------------------------------
-    # 1. RESOLVE TRUSTED SKILL
-    # --------------------------------------------------------
-
-    trusted_skill = (
-        resolve_trusted_skill(
-            skill_name
-        )
-    )
-
-    if not trusted_skill[
-        "trusted"
-    ]:
-
-        return build_audited_result(
-            executed=False,
-            skill_name=skill_name,
-            capability=capability,
-            reason=trusted_skill[
-                "reason"
-            ],
-            arguments=arguments,
-            status="blocked",
-        )
-
-    # --------------------------------------------------------
-    # 2. GET TRUSTED PERMISSIONS
-    # --------------------------------------------------------
-
-    trusted_permissions = (
-        trusted_skill[
-            "permissions"
-        ]
-    )
-
-    # --------------------------------------------------------
-    # 3. SEND THROUGH CAPABILITY BROKER
-    # --------------------------------------------------------
-
-    broker_result = (
-        request_capability(
-            skill_name=skill_name,
-            declared_permissions=(
-                trusted_permissions
-            ),
-            capability=capability,
-            arguments=arguments,
-        )
-    )
-
-    if not broker_result.get(
-        "accepted",
-        False,
-    ):
-
-        return build_audited_result(
-            executed=False,
-            skill_name=skill_name,
-            capability=capability,
-            reason=broker_result.get(
-                "reason",
-                "Capability broker rejected request.",
-            ),
-            arguments=arguments,
-            status="blocked",
-            extra={
-                "broker_result":
-                    broker_result,
-            },
-        )
-
-    # --------------------------------------------------------
-    # 4. USE VALIDATED ARGUMENTS
-    # --------------------------------------------------------
-
-    validated_arguments = (
-        broker_result.get(
-            "arguments",
-            {},
-        )
-    )
-
-    # --------------------------------------------------------
-    # 5. RISK GATE
-    # --------------------------------------------------------
-
-    risk = broker_result.get(
-        "risk",
-        "unknown",
-    )
-
-    if risk != "low":
-
-        return build_audited_result(
-            executed=False,
-            skill_name=skill_name,
-            capability=capability,
-            reason=(
-                "Capability execution blocked because "
-                "automatic skill execution currently "
-                "allows low-risk tools only."
-            ),
-            arguments=(
-                validated_arguments
-            ),
-            risk=risk,
-            status="blocked",
-        )
-
-    # --------------------------------------------------------
-    # 6. EXECUTE THROUGH CENTRAL TOOL REGISTRY
-    # --------------------------------------------------------
-
-    try:
-
-        success = execute_tool(
-            capability,
-            validated_arguments,
-        )
-
-    except Exception as error:
-
-        return build_audited_result(
-            executed=False,
-            skill_name=skill_name,
-            capability=capability,
-            reason=(
-                "Tool execution failed: "
-                f"{error}"
-            ),
-            arguments=(
-                validated_arguments
-            ),
-            risk=risk,
-            status="failed",
-        )
-
-    # --------------------------------------------------------
-    # 7. VERIFY TOOL RESULT
-    # --------------------------------------------------------
-
-    if success is not True:
-
-        return build_audited_result(
-            executed=False,
-            skill_name=skill_name,
-            capability=capability,
-            reason=(
-                "Tool Registry did not report "
-                "successful execution."
-            ),
-            arguments=(
-                validated_arguments
-            ),
-            risk=risk,
-            status="failed",
-        )
-
-    # --------------------------------------------------------
-    # 8. SUCCESS + AUDIT
-    # --------------------------------------------------------
-
+    # A caller-supplied skill name is not an authenticated process identity.
+    # Keep this legacy entry point closed until isolated authenticated IPC exists.
     return build_audited_result(
-        executed=True,
-        skill_name=skill_name,
-        capability=capability,
-        reason=(
-            "Capability executed through the "
-            "trusted skill execution gate."
-        ),
-        arguments=(
-            validated_arguments
-        ),
-        risk=risk,
-        status="executed",
+        executed=False, skill_name=skill_name, capability=capability,
+        reason=MESSAGES[ErrorCode.BACKEND_UNAVAILABLE], status="blocked",
     )
 
 

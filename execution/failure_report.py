@@ -1,10 +1,28 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from execution.safe_failure import ErrorCode, STAGES, SafeFailure, safe_message
+from execution.audit_schema import safe_id, safe_action, safe_agent
 
 from execution.execution_history import (
+    ExecutionEvent,
     ExecutionHistory,
     sanitize_for_history,
 )
+
+
+def _safe_evidence(events):
+    result = []
+    for event in events[-12:]:
+        if not isinstance(event, dict):
+            continue
+        result.append(ExecutionEvent(
+            event_type=event.get("event_type") if isinstance(event.get("event_type"), str) and event["event_type"] else "unknown_event",
+            task_id=event.get("task_id") if isinstance(event.get("task_id"), str) and event["task_id"] else "unknown",
+            step_id=event.get("step_id"), agent=event.get("agent"), action=event.get("action"),
+            details=event.get("details") if isinstance(event.get("details"), dict) else {},
+            event_id=event.get("event_id"), timestamp=event.get("timestamp"),
+        ).to_dict())
+    return result
 
 
 @dataclass(frozen=True)
@@ -20,18 +38,33 @@ class FailureReport:
     error: Optional[str]
 
     evidence: List[Dict[str, Any]]
+    failure: Optional[SafeFailure] = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "task_id", safe_id(self.task_id))
+        object.__setattr__(self, "failed_step_id", safe_id(self.failed_step_id))
+        object.__setattr__(self, "agent", safe_agent(self.agent))
+        object.__setattr__(self, "action", safe_action(self.action))
+        if self.error:
+            object.__setattr__(self, "error", safe_message(self.error))
+        if not isinstance(self.failure_stage, str) or self.failure_stage not in STAGES:
+            object.__setattr__(self, "failure_stage", None)
+        if self.failure is not None and not isinstance(self.failure, SafeFailure):
+            raise ValueError("Invalid typed failure.")
+        object.__setattr__(self, "evidence", _safe_evidence(self.evidence))
 
     def to_dict(self) -> Dict[str, Any]:
         return sanitize_for_history(
             {
-                "task_id": self.task_id,
+                "task_id": safe_id(self.task_id),
                 "failed": self.failed,
-                "failed_step_id": self.failed_step_id,
-                "agent": self.agent,
-                "action": self.action,
+                "failed_step_id": safe_id(self.failed_step_id),
+                "agent": safe_agent(self.agent),
+                "action": safe_action(self.action),
                 "failure_stage": self.failure_stage,
-                "error": self.error,
-                "evidence": self.evidence,
+                "error": safe_message(self.error) if self.error else None,
+                "failure": self.failure.to_dict() if self.failure else None,
+                "evidence": _safe_evidence(self.evidence),
             }
         )
 
@@ -173,7 +206,7 @@ class FailureReportBuilder:
                 "task_id must be a non-empty string."
             )
 
-        normalized_task_id = task_id.strip()
+        normalized_task_id = safe_id(task_id.strip())
 
         events = history.events_for_task(
             normalized_task_id
@@ -259,26 +292,14 @@ class FailureReportBuilder:
                 if isinstance(stage, str):
                     failure_stage = stage
 
-        error = details.get("error")
-
-        if not isinstance(error, str):
-
-            task_details = task_failure.get(
-                "details",
-                {},
-            )
-
-            if isinstance(task_details, dict):
-                fallback_error = task_details.get(
-                    "error"
-                )
-
-                if isinstance(fallback_error, str):
-                    error = fallback_error
-                else:
-                    error = None
-            else:
-                error = None
+        try:
+            code = ErrorCode(details.get("error_code"))
+        except (ValueError, TypeError):
+            code = ErrorCode.EXECUTION_FAILED
+        if code == ErrorCode.BACKEND_UNAVAILABLE:
+            failure_stage = "routing"
+        failure = SafeFailure(code, failure_stage or "execution")
+        error = failure.message
 
         return FailureReport(
             task_id=normalized_task_id,
@@ -288,6 +309,7 @@ class FailureReportBuilder:
             action=source_event.get("action"),
             failure_stage=failure_stage,
             error=error,
+            failure=failure,
             evidence=self._bounded_evidence(
                 events
             ),

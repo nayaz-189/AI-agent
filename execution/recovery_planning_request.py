@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
+from execution.audit_schema import safe_id
 
 from execution.failure_analyzer import FailureAnalysis
 from execution.recovery_proposal import (
@@ -75,13 +76,12 @@ class RecoveryPlanningRequest:
     def to_dict(self) -> Dict[str, Any]:
 
         return {
-            "request_id": self.request_id,
-            "created_at": self.created_at,
-            "original_task_id": self.original_task_id,
-            "recovery_proposal_id": self.recovery_proposal_id,
-            "failed_step_id": self.failed_step_id,
-            "goal": self.goal,
-            "reason": self.reason,
+            "request_id": safe_id(self.request_id),
+            "original_task_id": safe_id(self.original_task_id),
+            "recovery_proposal_id": safe_id(self.recovery_proposal_id),
+            "failed_step_id": safe_id(self.failed_step_id),
+            "goal": "Create a newly validated candidate plan with applicable permissions.",
+            "reason": "Recovery planning grants no execution authority.",
         }
 
 

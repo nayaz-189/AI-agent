@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
+from execution.safe_failure import SafeFailure, ErrorCode, safe_result
 
 
 ExecutionBackend = Callable[
@@ -13,6 +14,17 @@ class RouteResult:
     success: bool
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    failure: Optional[SafeFailure] = None
+
+    def __post_init__(self):
+        outcome = safe_result(self.result)
+        if (self.success is not True or self.error not in (None, "") or self.failure is not None
+                or (outcome and any(value is False for value in outcome.values()))):
+            failure = self.failure if isinstance(self.failure, SafeFailure) else SafeFailure(ErrorCode.EXECUTION_FAILED, "execution")
+            object.__setattr__(self, "success", False)
+            object.__setattr__(self, "failure", failure)
+            object.__setattr__(self, "error", failure.message)
+        object.__setattr__(self, "result", outcome)
 
 
 class ExecutionRouter:
@@ -100,6 +112,7 @@ class ExecutionRouter:
         if backend is None:
             return RouteResult(
                 success=False,
+                failure=SafeFailure(ErrorCode.BACKEND_UNAVAILABLE, "routing"),
                 error=(
                     "No execution backend registered for agent: "
                     f"{normalized_agent}"
@@ -128,6 +141,9 @@ class ExecutionRouter:
                     "Expected a dictionary."
                 ),
             )
+
+        if set(raw_result) - {"success", "result", "error"}:
+            return RouteResult(success=False, error="Invalid backend result fields.")
 
         success = raw_result.get("success")
 

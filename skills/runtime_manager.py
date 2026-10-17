@@ -1,6 +1,3 @@
-import json
-import subprocess
-import sys
 from pathlib import Path
 
 from knowledge.canonical_query import get_skills
@@ -319,244 +316,30 @@ def deactivate_skill(skill_name):
 # ============================================================
 
 def invoke_skill(skill_name, timeout=10):
-    """
-    Invoke an active skill through a separate worker process.
-
-    This provides process separation and timeout control.
-
-    IMPORTANT:
-    This is not yet a complete OS security sandbox.
-    """
-
-    # --------------------------------------------------------
-    # 1. REQUIRE ACTIVE SKILL
-    # --------------------------------------------------------
-
-    active_skill = get_active_skill(
-        skill_name
-    )
-
-    if active_skill is None:
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": "Skill is not active.",
-            "result": None,
-        }
-
-    # --------------------------------------------------------
-    # 2. REVALIDATE BEFORE EVERY EXECUTION
-    # --------------------------------------------------------
-
-    eligibility = check_activation_eligibility(
-        skill_name
-    )
-
-    if not eligibility["eligible"]:
-
-        ACTIVE_SKILLS.pop(
-            skill_name,
-            None,
-        )
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill failed runtime revalidation."
-            ),
-            "result": None,
-        }
-    # --------------------------------------------------------
-    # 3. RUNTIME PERMISSION GATE
-    # --------------------------------------------------------
-
-    requested_permissions = active_skill.get(
-        "permissions",
-        [],
-    )
-
-    if requested_permissions:
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill requires runtime permissions "
-                "that are not yet supported by the "
-                "capability broker."
-            ),
-            "requested_permissions": requested_permissions,
-            "result": None,
-        }
-    # --------------------------------------------------------
-    # 3. LOCATE ENTRYPOINT
-    # --------------------------------------------------------
-
-    skill_directory = Path(
-        active_skill["installed_path"]
-    )
-
-    entrypoint = (
-        skill_directory
-        / active_skill["entrypoint"]
-    ).resolve()
-
-    if not entrypoint.exists():
-
-        ACTIVE_SKILLS.pop(
-            skill_name,
-            None,
-        )
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill entrypoint disappeared."
-            ),
-            "result": None,
-        }
-
-    # --------------------------------------------------------
-    # 4. LOCATE WORKER
-    # --------------------------------------------------------
-
-    worker = (
-        Path(__file__).resolve().parent
-        / "skill_worker.py"
-    )
-
-    if not worker.exists():
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill worker could not be found."
-            ),
-            "result": None,
-        }
-
-    # --------------------------------------------------------
-    # 5. EXECUTE IN SEPARATE PROCESS
-    # --------------------------------------------------------
-
+    """Expose structural diagnostics only; worker payloads are not audit data."""
+    from execution.audit_schema import safe_id
+    from execution.safe_failure import safe_result, MESSAGES, ErrorCode
     try:
+        result = _invoke_skill(skill_name, timeout)
+        success = result.get("success") is True
+    except Exception:
+        result, success = {}, False
+    return {"success": success, "skill": safe_id(skill_name),
+            "error_code": None if success else ErrorCode.BACKEND_UNAVAILABLE.value,
+            "reason": "Skill executed successfully through worker process." if success else MESSAGES[ErrorCode.BACKEND_UNAVAILABLE],
+            "result": safe_result(result.get("result")) if success else None}
 
-        process = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                str(worker),
-                str(entrypoint),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(skill_directory),
-        )
 
-    except subprocess.TimeoutExpired:
+def _invoke_skill(skill_name, timeout=10):
+    """Fail closed before lookup, path resolution or process creation.
 
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                f"Skill exceeded the "
-                f"{timeout}-second runtime timeout."
-            ),
-            "result": None,
-        }
-
-    except Exception as error:
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                f"Could not start skill worker: {error}"
-            ),
-            "result": None,
-        }
-
-    # --------------------------------------------------------
-    # 6. READ WORKER RESPONSE
-    # --------------------------------------------------------
-
-    stdout = process.stdout.strip()
-    stderr = process.stderr.strip()
-
-    if not stdout:
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill worker returned no output."
-            ),
-            "result": None,
-            "stderr": stderr,
-        }
-
-    try:
-
-        worker_response = json.loads(
-            stdout
-        )
-
-    except json.JSONDecodeError:
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": (
-                "Skill worker returned invalid JSON."
-            ),
-            "result": None,
-            "stdout": stdout,
-            "stderr": stderr,
-        }
-
-    # --------------------------------------------------------
-    # 7. VERIFY PROCESS
-    # --------------------------------------------------------
-
-    if (
-        process.returncode != 0
-        or not worker_response.get(
-            "success",
-            False,
-        )
-    ):
-
-        return {
-            "success": False,
-            "skill": skill_name,
-            "reason": worker_response.get(
-                "error",
-                "Skill worker failed.",
-            ),
-            "result": None,
-            "stderr": stderr,
-        }
-
-    # --------------------------------------------------------
-    # SUCCESS
-    # --------------------------------------------------------
-
-    return {
-        "success": True,
-        "skill": skill_name,
-        "reason": (
-            "Skill executed successfully "
-            "through worker process."
-        ),
-        "result": worker_response.get(
-            "result"
-        ),
-    }
+    Installed/active metadata is not OS isolation. There is deliberately no
+    environment variable, manifest permission or caller flag to enable this.
+    """
+    from execution.audit_schema import safe_id
+    return {"success": False, "skill": safe_id(skill_name), "result": None,
+            "error_code": "backend_unavailable",
+            "reason": "Skill execution requires an OS-isolated worker."}
 if __name__ == "__main__":
 
     print()

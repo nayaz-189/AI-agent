@@ -82,7 +82,10 @@ class NotepadTestSession:
         if not isinstance(content, str) or not content or len(content) > 4096:
             raise ValueError("Invalid introduction content.")
         self.session_id = uuid4().hex
-        self.content = content
+        # Windows Notepad's RichEdit ValuePattern represents paragraph breaks
+        # as CR. Prepare that exact representation BEFORE consent/digest binding.
+        # Never normalize observed text: extra whitespace/newlines must still fail.
+        self.content = content.replace("\r\n", "\r").replace("\n", "\r")
         self.files = TestFileStore(self.session_id)
         self.binding = None
         self.saved = False

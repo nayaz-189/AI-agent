@@ -13,6 +13,9 @@ def clean_command(command):
 def fast_route(command):
     command = clean_command(command)
 
+    if command.rstrip(".") == "research python ast and pathlib, summarize the findings, and save an approved report":
+        return {"tool": "research_and_save_report", "arguments": {}}
+
     # This narrow local intent avoids sending a desktop request to any model.
     if command.rstrip(".") in {
         "open notepad, write a short introduction about artificial intelligence, "
