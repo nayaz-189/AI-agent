@@ -308,3 +308,28 @@ execution/test_source_security.py
 knowledge/public_context_schema.py
 knowledge/test_source_security.py
 ```
+
+## Day 16 post-merge release review — 2026-10-17
+
+The Day 16 implementation and reviewed security corrections were
+integrated into main through pull request #1 (merge commit 5df3079).
+
+Verified scope:
+- Six specialist role definitions; Research and Windows have implemented adapters.
+- Fixed-source research and verified Notepad test-document workflows.
+- Task-bound, in-memory completion-verification evidence.
+- Default-deny device transport with no production remote connectivity.
+- Untrusted skill execution remains disabled.
+- Exact documentation allowlist and active lifecycle finalization guard.
+- Local Windows security regression suite and source/export checks passed.
+
+Known limitations:
+- No physical Android connection or authenticated cross-device transport.
+- No OS-isolated execution workers or production enclave.
+- No arbitrary desktop or mobile action authorization.
+- No GitHub CI run for the final correction commit.
+- In-memory evidence does not protect against malicious code in the trusted process.
+
+Day 16 lifecycle activated at version 0.015.
+Target release: v0.016.
+Finalization pending successful finalizer dry-run and explicit approval.
