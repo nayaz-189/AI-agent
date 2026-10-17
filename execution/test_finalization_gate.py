@@ -27,6 +27,7 @@ def test_compilation_success_cannot_bypass_failed_security_suite():
         with ExitStack() as stack:
             for name, value in {
                 "get_current_day": 16, "get_current_version": "0.015",
+                "get_project_info": {"current_day": 16, "version": "0.015", "status": "development"},
                 "classify_repository_changes": {"source": ["main.py"], "blocked": [], "unknown": []},
                 "_verify_core_repository": None, "_verify_context_repository": None,
                 "_compile_project": {"passed": True}, "_check_dependencies": {"passed": True},
@@ -40,6 +41,33 @@ def test_compilation_success_cannot_bypass_failed_security_suite():
                 assert finalizer.finalize_development(dry_run=dry_run) is False
             for mutation in mutations:
                 mutation.assert_not_called()
+
+
+def test_inactive_or_inconsistent_lifecycle_blocks_finalization_without_writes():
+    states = (
+        None,
+        {"current_day": 15, "version": "0.015", "status": "completed"},
+        {"current_day": 16, "version": "0.015", "status": "completed"},
+        {"current_day": 15, "version": "0.015", "status": "development"},
+        {"current_day": 16, "version": "0.014", "status": "development"},
+    )
+    for dry_run in (True, False):
+        for state in states:
+            with ExitStack() as stack:
+                for name, value in {
+                    "get_current_day": 16,
+                    "get_current_version": "0.015",
+                    "get_project_info": state,
+                }.items():
+                    stack.enter_context(patch.object(finalizer, name, return_value=value))
+                operations = [stack.enter_context(patch.object(finalizer, name)) for name in (
+                    "classify_repository_changes", "update_project", "complete_development_day",
+                    "_refresh_knowledge_pipeline", "stage_paths", "commit",
+                    "push_current_branch", "publish_to_context_repository")]
+                with redirect_stdout(StringIO()):
+                    assert finalizer.finalize_development(dry_run=dry_run) is False
+                for operation in operations:
+                    operation.assert_not_called()
 
 
 def test_suite_rejects_missing_tests_and_disabled_assertions():

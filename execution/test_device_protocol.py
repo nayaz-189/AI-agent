@@ -52,6 +52,23 @@ def test_default_transport_and_unregistered_or_spoofed_peer_denied():
     assert receiver.receive()["status"] == "failed" and receiver.history() == []
 
 
+def test_registered_peer_or_environment_flags_cannot_enable_default_transport():
+    import os
+    with patch.dict(os.environ, {"VORAK_REMOTE_ENABLED": "1", "AUTHENTICATED": "true",
+                                "DURABLE_REPLAY_ENABLED": "true"}), \
+         patch("execution.device_protocol._execute_calculator") as execute:
+        receiver = DeviceReceiver(registered_peers=(str(uuid4()),))
+        assert receiver.receive()["status"] == "failed"
+        assert receiver.dispatch_pending(online=True) == []
+        assert receiver.history() == []
+        execute.assert_not_called()
+    try:
+        DeviceReceiver({"authenticated": True, "paired": True, "durable_replay": True})
+        assert False, "JSON claims must not construct an authenticated transport"
+    except TypeError:
+        pass
+
+
 def test_unknown_operations_escalation_private_paths_and_fake_confirmation_denied():
     for operation in ("shell", "read_password", "banking", "payments", "write_test_introduction", "research_and_save_report"):
         receiver, transport, message, _ = fixture()

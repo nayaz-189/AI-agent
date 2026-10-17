@@ -31,6 +31,7 @@ from knowledge.knowledge_query import (
 )
 from knowledge.lifecycle_manager import (
     complete_development_day,
+    get_project_info,
     update_project,
 )
 from knowledge.publication_manager import (
@@ -87,7 +88,13 @@ ALLOWED_SOURCE_DIRECTORIES = {
 }
 
 # One reviewed implementation note, not a blanket docs-directory exception.
-ALLOWED_DOCUMENTATION_FILES = {"docs/runtime-integration.md"}
+# Individually reviewed documents for the next normal lifecycle transition.
+# This is an exact filename allowlist, never authorization for docs/**.
+ALLOWED_DOCUMENTATION_FILES = {
+    "docs/runtime-integration.md",
+    "docs/day16-integration.md",
+    "docs/security-architecture.md",
+}
 
 
 BLOCKED_NAMES = {
@@ -1225,6 +1232,18 @@ def finalize_development(
 
         day = get_current_day()
         version = get_current_version()
+        project = get_project_info()
+
+        # A completed day must never be finalized again. Reconcile the
+        # separately read lifecycle fields before any repository mutation.
+        if (type(project) is not dict
+                or project.get("status") != "development"
+                or type(project.get("current_day")) is not int
+                or project.get("current_day") != day
+                or project.get("version") != version):
+            raise RuntimeError(
+                "An active and consistent development day is required."
+            )
 
         if (
             day is None

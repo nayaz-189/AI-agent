@@ -54,6 +54,8 @@ def execute_document_workflow(session, *, history, confirmation_ui=None):
         raw = session.state()
         state = {key: raw.get(key) is True for key in (
             "document_ready", "document_empty", "content_matches", "file_matches")}
+        history._record_verification(task, "document_export", all(state[key] for key in (
+            "document_ready", "content_matches", "file_matches")))
         history.record(ExecutionEvent(event_type="document_observed", task_id=task.task_id,
                                       details=state))
         return state

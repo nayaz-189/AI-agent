@@ -38,7 +38,7 @@ def test_successful_verified_two_specialist_workflow():
     task, session, history = run_report()
     assert task.status.value == "completed", task.error
     assert [s.agent for s in task.steps] == ["research", "windows"]
-    report = completion_report(task)
+    report = completion_report(task, history=history)
     assert report["verified"] and report["specialists"] == ["research", "windows"]
     saved = session.files.data[session.files.names[1]]
     assert saved == session.control.CurrentValue and "https://docs.python.org" in saved
@@ -153,6 +153,99 @@ def test_successful_child_status_without_independent_evidence_is_rejected():
          patch("execution.document_workflow.execute_document_workflow", return_value=child):
         task = execute_plan(DEMO_COMMAND, {"tool": "research_and_save_report", "arguments": {}})
     assert task.status.value == "failed" and not completion_report(task)["verified"]
+
+
+def test_fabricated_completed_task_and_declared_postconditions_are_not_evidence():
+    from execution.task import Task
+    from execution.task_step import TaskStep
+    task = Task(goal="synthetic")
+    step = TaskStep(action="export_verified_report", agent="windows", postconditions=[
+        {"type": "state_equals", "key": "report_verified", "expected": True}])
+    task.add_step(step)
+    step.mark_running()
+    step.mark_completed(result={"verified": True})
+    task.mark_completed(result={"verified": True})
+    assert completion_report(task)["verified"] is False
+    assert completion_report(task, history=ExecutionHistory())["verified"] is False
+
+
+def test_missing_cleared_or_serialized_history_cannot_claim_verification():
+    from execution.execution_history import ExecutionEvent
+    task, _, history = run_report()
+    assert completion_report(task, history=history)["verified"] is True
+    assert completion_report(task)["verified"] is False
+    replayed = ExecutionHistory()
+    for event in history.all_events():
+        replayed.record(ExecutionEvent(**event))
+    assert completion_report(task, history=replayed)["verified"] is False
+    history.clear()
+    assert completion_report(task, history=history)["verified"] is False
+
+
+def test_evidence_cannot_transfer_to_copied_task_or_another_history():
+    from copy import deepcopy
+    task, _, history = run_report()
+    other, _, other_history = run_report()
+    assert completion_report(deepcopy(task), history=history)["verified"] is False
+    assert completion_report(task, history=other_history)["verified"] is False
+    assert completion_report(other, history=history)["verified"] is False
+
+
+def test_changed_task_step_target_or_conditions_invalidate_evidence():
+    from copy import deepcopy
+    task, _, history = run_report()
+    original_id = task.task_id
+    task.task_id = "task_" + "f" * 12
+    assert completion_report(task, history=history)["verified"] is False
+    task.task_id = original_id
+    step = task.steps[-1]
+    for field, value in (("step_id", "step_" + "f" * 12), ("action", "open_calculator"),
+                         ("agent", "system"), ("arguments", {"target": "synthetic-other"}),
+                         ("preconditions", []), ("postconditions", []),
+                         ("requires_confirmation", True)):
+        old = deepcopy(getattr(step, field))
+        setattr(step, field, value)
+        assert completion_report(task, history=history)["verified"] is False, field
+        setattr(step, field, old)
+    assert completion_report(task, history=history)["verified"] is True
+
+
+def test_failed_observation_cannot_be_overridden_by_fabricated_completion():
+    from execution.task_state import TaskStatus, StepStatus
+    task, _, history = run_report(configure=lambda s: setattr(s.files, "fail_read", True))
+    assert task.status == TaskStatus.FAILED
+    task.status, task.error = TaskStatus.COMPLETED, None
+    for step in task.steps:
+        step.status, step.error = StepStatus.COMPLETED, None
+    assert completion_report(task, history=history)["verified"] is False
+
+
+def test_calculator_and_document_valid_completion_need_trusted_observations():
+    from execution.test_document_workflow import run
+    document, _, history = run()
+    assert completion_report(document, history=history)["verified"] is True
+    for observed in (True, False):
+        history = ExecutionHistory()
+        with patch("tools.system_tools._open_calculator", return_value=True), \
+             patch("desktop.application_observer.observe_calculator", return_value={"calculator_open": observed}):
+            task = execute_plan("Open Calculator", {"tool": "open_calculator", "arguments": {}}, history=history)
+        assert completion_report(task, history=history)["verified"] is observed
+
+
+def test_fabricated_child_with_matching_audit_events_is_not_trusted():
+    from copy import deepcopy
+    from execution.execution_history import ExecutionEvent
+    from execution.test_document_workflow import run
+    child, _, child_history = run()
+    forged = deepcopy(child)
+    history = ExecutionHistory()
+    for event in child_history.all_events():
+        history.record(ExecutionEvent(**event))
+    with patch("agents.research_agent.fetch_source", side_effect=finding), \
+         patch("execution.document_workflow.execute_document_workflow", return_value=forged):
+        task = execute_plan(DEMO_COMMAND, {"tool": "research_and_save_report", "arguments": {}}, history=history)
+    assert task.status.value == "failed"
+    assert completion_report(task, history=history)["verified"] is False
 
 
 if __name__ == "__main__":

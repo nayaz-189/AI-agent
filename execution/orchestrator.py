@@ -95,11 +95,10 @@ def execute_orchestration(plan, *, history=None, confirmation_ui=None):
                                           confirmation_ui=confirmation_ui)
         # Child completion includes independent UI and file observations, never
         # just a successful tool return. Check that evidence as well as status.
-        evidence = [e["details"] for e in history.events_for_task(child.task_id)
-                    if e["event_type"] == "document_observed"]
-        state["report_verified"] = (child.status == TaskStatus.COMPLETED and len(child.steps) == 4
-                                    and bool(evidence) and evidence[-1].get("file_matches") is True
-                                    and evidence[-1].get("content_matches") is True)
+        state["report_verified"] = history.has_verification(child, "document_export")
+        # Bind the independently verified child outcome to this exact parent.
+        # Audit event dictionaries and backend success flags cannot mint it.
+        history._record_verification(task, "research_report", state["report_verified"])
         return {"success": state["report_verified"], "result": {"verified": state["report_verified"]}}
 
     router = ExecutionRouter()
@@ -109,12 +108,16 @@ def execute_orchestration(plan, *, history=None, confirmation_ui=None):
                         state_provider=lambda: dict(state)).execute(task)
 
 
-def completion_report(task):
-    """Safe structured result; full text and device identity never enter history."""
+def completion_report(task, *, history=None):
+    """Report verified only with trusted, bound observation provenance.
+
+    Missing history fails closed. Serialized events, task status and declared
+    postconditions are not proof. Host Python and observer adapters remain trusted.
+    """
     roles = sorted({"windows" if s.agent in {"system", "desktop_document"} else s.agent
                     for s in task.steps} & {r.value for r in Role})
-    verified = (task.status == TaskStatus.COMPLETED and bool(task.steps)
-                and all(s.status.value == "completed" for s in task.steps)
-                and bool(task.steps[-1].postconditions))
+    verified = type(history) is ExecutionHistory and any(
+        history.has_verification(task, kind)
+        for kind in ("calculator", "document_export", "research_report"))
     return {"task_id": task.to_dict()["task_id"], "status": task.status.value,
-            "specialists": roles, "verified": verified, "error": task.error}
+            "specialists": roles, "verified": verified, "error": task.to_dict()["error"]}

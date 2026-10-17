@@ -116,6 +116,7 @@ def execute_plan(command, plan, *, history=None, confirmation_ui=None):
         from desktop.application_observer import observe_calculator
 
         state = observe_calculator()
+        history._record_verification(task, "calculator", state.get("calculator_open") is True)
         history.record(ExecutionEvent(
             event_type="state_observed", task_id=task.task_id,
             step_id=task.steps[0].step_id, agent=metadata["agent"],
