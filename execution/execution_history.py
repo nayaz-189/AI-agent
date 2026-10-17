@@ -3,6 +3,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+import hashlib
+import json
+import weakref
+from execution.audit_schema import EVENTS, event_details, safe_action, safe_agent, safe_id
 
 
 REDACTED = "[REDACTED]"
@@ -70,13 +74,13 @@ def sanitize_for_history(
     value: Any,
 ) -> Any:
     """
-    Create a sanitized copy of execution data before it enters history.
+    Legacy key redactor retained for callers; NOT an audit/export boundary.
 
     Key-based secret redaction is deliberately conservative.
 
     Important:
     This is not yet a complete secret-detection system.
-    Schema-aware sensitivity metadata will be added later.
+    ExecutionEvent enforces audit_schema independently; use that for audit data.
     """
 
     if isinstance(value, dict):
@@ -122,6 +126,18 @@ def utc_timestamp() -> str:
     return datetime.now(
         timezone.utc
     ).isoformat()
+
+
+def safe_timestamp(value) -> str:
+    """Retain evidence time across copies, accepting only canonical UTC times."""
+    if isinstance(value, str) and len(value) <= 32:
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.utcoffset() == timezone.utc.utcoffset(None):
+                return parsed.isoformat()
+        except ValueError:
+            pass
+    return utc_timestamp()
 
 
 @dataclass(frozen=True)
@@ -171,22 +187,25 @@ class ExecutionEvent:
         object.__setattr__(
             self,
             "event_type",
-            self.event_type.strip(),
+            self.event_type.strip() if self.event_type.strip() in EVENTS else "unknown_event",
         )
 
         object.__setattr__(
             self,
             "task_id",
-            self.task_id.strip(),
+            safe_id(self.task_id.strip()),
         )
 
         object.__setattr__(
             self,
             "details",
-            sanitize_for_history(
-                self.details
-            ),
+            event_details(self.event_type, self.details),
         )
+        object.__setattr__(self, "step_id", safe_id(self.step_id))
+        object.__setattr__(self, "event_id", safe_id(self.event_id))
+        object.__setattr__(self, "agent", safe_agent(self.agent))
+        object.__setattr__(self, "action", safe_action(self.action))
+        object.__setattr__(self, "timestamp", safe_timestamp(self.timestamp))
 
     def to_dict(self) -> Dict[str, Any]:
 
@@ -198,9 +217,7 @@ class ExecutionEvent:
             "step_id": self.step_id,
             "agent": self.agent,
             "action": self.action,
-            "details": sanitize_for_history(
-                self.details
-            ),
+            "details": event_details(self.event_type, self.details),
         }
 
 
@@ -218,6 +235,65 @@ class ExecutionHistory:
         self._events: List[
             ExecutionEvent
         ] = []
+        # Private observation provenance, never reconstructed from event JSON.
+        # Weak references and digests avoid retaining task goals/argument values.
+        self._verification_records = {}
+
+    @staticmethod
+    def _verification_binding(task):
+        definition = {"task_id": task.task_id, "steps": [
+            {"step_id": step.step_id, "agent": step.agent, "action": step.action,
+             "arguments": step.arguments, "preconditions": step.preconditions,
+             "postconditions": step.postconditions,
+             "requires_confirmation": step.requires_confirmation}
+            for step in task.steps]}
+        encoded = json.dumps(definition, sort_keys=True, separators=(",", ":"),
+                             allow_nan=False).encode("utf-8")
+        return hashlib.sha256(encoded).digest()
+
+    def _record_verification(self, task, kind, passed):
+        """Trusted observer/composition API; never expose as a model tool.
+
+        Called during the final running step after independent observation. This
+        records evidence only, grants no execution authority, and is not an OS or
+        cryptographic boundary against malicious Python inside this process.
+        """
+        from execution.task import Task
+        from execution.task_state import TaskStatus, StepStatus
+        if (type(task) is not Task or task.status != TaskStatus.RUNNING
+                or not task.steps or task.get_current_step() is not task.steps[-1]
+                or task.steps[-1].status != StepStatus.RUNNING
+                or kind not in {"calculator", "document_export", "research_report"}
+                or type(passed) is not bool):
+            return
+        key = id(task)
+        # Invalidate earlier evidence even if binding the new observation fails.
+        self._verification_records.pop(key, None)
+        try:
+            binding = self._verification_binding(task)
+        except (TypeError, ValueError):
+            return
+
+        def discard(reference):
+            current = self._verification_records.get(key)
+            if current is not None and current[0] is reference:
+                self._verification_records.pop(key, None)
+
+        self._verification_records[key] = (weakref.ref(task, discard), binding, kind, passed)
+
+    def has_verification(self, task, kind):
+        """Read a bound receipt, not a status/condition declaration or audit claim."""
+        from execution.task import Task
+        from execution.task_state import TaskStatus, StepStatus
+        if (type(task) is not Task or task.status != TaskStatus.COMPLETED or task.error
+                or not task.steps or any(s.status != StepStatus.COMPLETED or s.error for s in task.steps)):
+            return False
+        record = self._verification_records.get(id(task))
+        try:
+            return bool(record is not None and record[0]() is task and record[2] == kind
+                        and record[3] is True and record[1] == self._verification_binding(task))
+        except (TypeError, ValueError):
+            return False
 
     def record(
         self,
@@ -238,9 +314,7 @@ class ExecutionHistory:
             step_id=event.step_id,
             agent=event.agent,
             action=event.action,
-            details=sanitize_for_history(
-                event.details
-            ),
+            details=event_details(event.event_type, event.details),
             event_id=event.event_id,
             timestamp=event.timestamp,
         )
@@ -266,7 +340,7 @@ class ExecutionHistory:
         return [
             event.to_dict()
             for event in self._events
-            if event.task_id == task_id
+            if event.task_id == safe_id(task_id)
         ]
 
     def events_for_step(
@@ -277,7 +351,7 @@ class ExecutionHistory:
         return [
             event.to_dict()
             for event in self._events
-            if event.step_id == step_id
+            if event.step_id == safe_id(step_id)
         ]
 
     def count(
@@ -293,3 +367,4 @@ class ExecutionHistory:
     ) -> None:
 
         self._events.clear()
+        self._verification_records.clear()

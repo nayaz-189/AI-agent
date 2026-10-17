@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from execution.task_state import StepStatus
+from execution.safe_failure import safe_message, safe_result, MESSAGES, ErrorCode
+from execution.audit_schema import safe_id, safe_action, safe_agent
 
 
 def generate_step_id() -> str:
@@ -91,7 +93,7 @@ class TaskStep:
             )
 
         self.status = StepStatus.WAITING_FOR_USER
-        self.error = reason.strip()
+        self.error = MESSAGES[ErrorCode.CONFIRMATION_REQUIRED]
 
     def mark_completed(
         self,
@@ -128,7 +130,7 @@ class TaskStep:
             )
 
         self.status = StepStatus.FAILED
-        self.error = error.strip()
+        self.error = safe_message(error)
         self.result = result
 
     def mark_skipped(
@@ -147,7 +149,7 @@ class TaskStep:
             )
 
         self.status = StepStatus.SKIPPED
-        self.error = reason.strip()
+        self.error = safe_message(reason)
 
     def is_terminal(self) -> bool:
 
@@ -160,14 +162,14 @@ class TaskStep:
     def to_dict(self) -> Dict[str, Any]:
 
         return {
-            "step_id": self.step_id,
-            "agent": self.agent,
-            "action": self.action,
-            "arguments": self.arguments,
-            "preconditions": self.preconditions,
-            "postconditions": self.postconditions,
+            "step_id": safe_id(self.step_id),
+            "agent": safe_agent(self.agent),
+            "action": safe_action(self.action),
+            "argument_count": len(self.arguments),
+            "precondition_count": len(self.preconditions),
+            "postcondition_count": len(self.postconditions),
             "requires_confirmation": self.requires_confirmation,
             "status": self.status.value,
-            "result": self.result,
-            "error": self.error,
+            "result": safe_result(self.result),
+            "error": safe_message(self.error) if self.error else None,
         }

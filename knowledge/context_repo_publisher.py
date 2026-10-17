@@ -1,6 +1,7 @@
 import hashlib
 import json
-import shutil
+import os
+from contextlib import ExitStack
 from pathlib import Path
 
 from knowledge.publication_manager import (
@@ -69,6 +70,101 @@ ALLOWED_ARTIFACTS = {
     "external_project_context.json",
     "external_manifest.json",
 }
+
+
+def _check_publication_handle(handle, path, *, directory=False):
+    import win32file
+    info = win32file.GetFileInformationByHandle(handle)
+    actual = win32file.GetFinalPathNameByHandle(handle, 0).removeprefix("\\\\?\\")
+    if (info[0] & 0x400 or bool(info[0] & 0x10) != directory
+            or os.path.normcase(actual) != os.path.normcase(os.path.abspath(path))
+            or (not directory and info[7] != 1)):
+        raise ValueError("Unsafe publication path.")
+    return info
+
+
+def _lock_publication_directory(stack, directory):
+    """Hold ancestors against rename/delete, including junction replacement."""
+    import win32con
+    import win32file
+    for path in reversed((directory, *directory.parents)):
+        handle = win32file.CreateFile(str(path), 0x80,
+            win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None,
+            win32con.OPEN_EXISTING, 0x02000000 | 0x00200000, None)
+        stack.callback(handle.Close)
+        _check_publication_handle(handle, path, directory=True)
+
+
+def _open_publication_file(stack, path, *, writable=False, readback=False):
+    import win32con
+    import win32file
+    access = win32con.GENERIC_READ | (win32con.GENERIC_WRITE if writable else 0)
+    sharing = win32con.FILE_SHARE_READ | (win32con.FILE_SHARE_WRITE if readback else 0)
+    handle = win32file.CreateFile(str(path), access, sharing, None,
+        win32con.OPEN_ALWAYS if writable else win32con.OPEN_EXISTING,
+        win32con.FILE_ATTRIBUTE_NORMAL | 0x00200000, None)
+    stack.callback(handle.Close)
+    # Validate before reading or truncating, including pre-existing hardlinks.
+    _check_publication_handle(handle, path)
+    return handle
+
+
+def _read_publication_handle(handle):
+    import win32file
+    info = win32file.GetFileInformationByHandle(handle)
+    size = (info[5] << 32) | info[6]
+    if size > 2_000_000:
+        raise ValueError("Publication size limit exceeded.")
+    data = win32file.ReadFile(handle, size)[1] if size else b""
+    if len(data) != size:
+        raise ValueError("Incomplete publication read.")
+    return data
+
+
+def _validate_publication_bytes(artifacts):
+    from knowledge.public_context_schema import valid_public_context, valid_public_manifest, load_public_json
+    context = load_public_json(artifacts["external_project_context.json"])
+    manifest = load_public_json(artifacts["external_manifest.json"])
+    digest = hashlib.sha256(artifacts["external_project_context.json"]).hexdigest()
+    if not valid_public_context(context) or not valid_public_manifest(manifest, context, digest):
+        raise ValueError("Publication schema or integrity validation failed.")
+    return digest
+
+
+def _publish_locked_snapshot():
+    """Copy only validated bytes while source/destination identities are held."""
+    import win32con
+    import win32file
+    if os.name != "nt":
+        raise RuntimeError("Checked publication is available only on Windows.")
+    with ExitStack() as stack:
+        _lock_publication_directory(stack, EXPORT_DIRECTORY)
+        _lock_publication_directory(stack, CONTEXT_REPOSITORY)
+        if (CONTEXT_REPOSITORY.name != "AI-agent-context"
+                or not (CONTEXT_REPOSITORY / ".git").is_dir()
+                or {p.name for p in EXPORT_DIRECTORY.iterdir()} != ALLOWED_ARTIFACTS
+                or {p.name for p in CONTEXT_REPOSITORY.iterdir()} - ALLOWED_ARTIFACTS - {".git"}):
+            raise ValueError("Invalid publication directories.")
+        sources = {name: _open_publication_file(stack, EXPORT_DIRECTORY / name)
+                   for name in sorted(ALLOWED_ARTIFACTS)}
+        artifacts = {name: _read_publication_handle(handle) for name, handle in sources.items()}
+        digest = _validate_publication_bytes(artifacts)
+        destinations = {name: _open_publication_file(stack, CONTEXT_REPOSITORY / name, writable=True)
+                        for name in sorted(ALLOWED_ARTIFACTS)}
+        for name, handle in destinations.items():
+            data = artifacts[name]
+            win32file.SetFilePointer(handle, 0, win32con.FILE_BEGIN)
+            status, written = win32file.WriteFile(handle, data)
+            if status != 0 or written != len(data):
+                raise RuntimeError("Incomplete publication write.")
+            win32file.SetEndOfFile(handle)
+            win32file.FlushFileBuffers(handle)
+            reader = _open_publication_file(stack, CONTEXT_REPOSITORY / name, readback=True)
+            if _read_publication_handle(reader) != data:
+                raise RuntimeError("Publication readback failed.")
+        return {"published": True, "destination": str(CONTEXT_REPOSITORY),
+                "copied": sorted(ALLOWED_ARTIFACTS), "sha256": digest,
+                "manifest_sha256": hashlib.sha256(artifacts["external_manifest.json"]).hexdigest()}
 
 
 def calculate_sha256(path):
@@ -304,233 +400,15 @@ def destination_is_safe():
 
 
 def publish_to_context_repository():
+    """Copy a verified snapshot using held Windows handles, without Git writes.
+
+    Failure may leave an incomplete pair inside the approved destination;
+    it never reports that pair as successfully published.
     """
-    Perform a controlled one-way copy of an EXISTING external
-    publication package into the dedicated context repository.
-
-    The package is NOT regenerated here.
-
-    No Git commit or push occurs here.
-    """
-
-    # --------------------------------------------------------
-    # 1. VERIFY EXISTING PUBLICATION PACKAGE
-    # --------------------------------------------------------
-
-    verification = (
-        verify_publication_package()
-    )
-
-    if not verification.get(
-        "valid",
-        False,
-    ):
-        return {
-            "published": False,
-            "reason":
-                "Existing publication package integrity "
-                "verification failed.",
-            "details":
-                verification,
-        }
-
-    # --------------------------------------------------------
-    # 2. VERIFY DESTINATION REPOSITORY
-    # --------------------------------------------------------
-
-    repository_check = (
-        validate_context_repository()
-    )
-
-    if not repository_check.get(
-        "valid",
-        False,
-    ):
-        return {
-            "published": False,
-            "reason":
-                repository_check.get(
-                    "reason"
-                ),
-        }
-
-    # --------------------------------------------------------
-    # 3. VERIFY SOURCE ALLOWLIST
-    # --------------------------------------------------------
-
-    allowlist_check = (
-        validate_artifact_allowlist()
-    )
-
-    if not allowlist_check.get(
-        "valid",
-        False,
-    ):
-        return {
-            "published": False,
-            "reason":
-                allowlist_check.get(
-                    "reason"
-                ),
-            "details":
-                allowlist_check,
-        }
-
-    # --------------------------------------------------------
-    # 4. VERIFY DESTINATION CONTENT
-    # --------------------------------------------------------
-
-    destination_check = (
-        destination_is_safe()
-    )
-
-    if not destination_check.get(
-        "safe",
-        False,
-    ):
-        return {
-            "published": False,
-            "reason":
-                destination_check.get(
-                    "reason"
-                ),
-            "details":
-                destination_check,
-        }
-
-    # --------------------------------------------------------
-    # 5. VERIFY SOURCE HASH AGAINST MANIFEST
-    # --------------------------------------------------------
-
-    hash_check = (
-        verify_context_hash_against_manifest()
-    )
-
-    if not hash_check.get(
-        "valid",
-        False,
-    ):
-        return {
-            "published": False,
-            "reason":
-                hash_check.get(
-                    "reason"
-                ),
-            "details":
-                hash_check,
-        }
-
-    source_hash = (
-        hash_check["sha256"]
-    )
-
-    # --------------------------------------------------------
-    # 6. COPY ONLY ALLOWLISTED FILES
-    # --------------------------------------------------------
-
-    copied = []
-
-    for filename in sorted(
-        ALLOWED_ARTIFACTS
-    ):
-        source = (
-            EXPORT_DIRECTORY
-            / filename
-        )
-
-        destination = (
-            CONTEXT_REPOSITORY
-            / filename
-        )
-
-        shutil.copy2(
-            source,
-            destination,
-        )
-
-        copied.append(
-            filename
-        )
-
-    # --------------------------------------------------------
-    # 7. VERIFY DESTINATION CONTEXT HASH
-    # --------------------------------------------------------
-
-    destination_context = (
-        CONTEXT_REPOSITORY
-        / "external_project_context.json"
-    )
-
-    destination_hash = (
-        calculate_sha256(
-            destination_context
-        )
-    )
-
-    if destination_hash != source_hash:
-        return {
-            "published": False,
-            "reason":
-                "Destination context failed "
-                "post-copy integrity check.",
-            "expected":
-                source_hash,
-            "actual":
-                destination_hash,
-        }
-
-    # --------------------------------------------------------
-    # 8. VERIFY DESTINATION MANIFEST HASH
-    # --------------------------------------------------------
-
-    source_manifest = (
-        EXPORT_DIRECTORY
-        / "external_manifest.json"
-    )
-
-    destination_manifest = (
-        CONTEXT_REPOSITORY
-        / "external_manifest.json"
-    )
-
-    source_manifest_hash = (
-        calculate_sha256(
-            source_manifest
-        )
-    )
-
-    destination_manifest_hash = (
-        calculate_sha256(
-            destination_manifest
-        )
-    )
-
-    if (
-        destination_manifest_hash
-        != source_manifest_hash
-    ):
-        return {
-            "published": False,
-            "reason":
-                "Destination manifest failed "
-                "post-copy integrity check.",
-            "expected":
-                source_manifest_hash,
-            "actual":
-                destination_manifest_hash,
-        }
-
-    return {
-        "published": True,
-        "destination":
-            str(CONTEXT_REPOSITORY),
-        "copied":
-            copied,
-        "sha256":
-            destination_hash,
-        "manifest_sha256":
-            destination_manifest_hash,
-    }
+    try:
+        return _publish_locked_snapshot()
+    except Exception:
+        return {"published": False, "reason": "Publication was blocked or verification failed."}
 
 
 if __name__ == "__main__":

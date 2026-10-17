@@ -31,6 +31,7 @@ from knowledge.knowledge_query import (
 )
 from knowledge.lifecycle_manager import (
     complete_development_day,
+    get_project_info,
     update_project,
 )
 from knowledge.publication_manager import (
@@ -87,7 +88,13 @@ ALLOWED_SOURCE_DIRECTORIES = {
 }
 
 # One reviewed implementation note, not a blanket docs-directory exception.
-ALLOWED_DOCUMENTATION_FILES = {"docs/runtime-integration.md"}
+# Individually reviewed documents for the next normal lifecycle transition.
+# This is an exact filename allowlist, never authorization for docs/**.
+ALLOWED_DOCUMENTATION_FILES = {
+    "docs/runtime-integration.md",
+    "docs/day16-integration.md",
+    "docs/security-architecture.md",
+}
 
 
 BLOCKED_NAMES = {
@@ -581,6 +588,20 @@ def _check_dependencies():
         "stderr":
             result.stderr.strip(),
     }
+
+
+def _run_security_regressions():
+    """Compilation is not test evidence. Run the fixed suite before mutation."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-E", "-m", "execution.regression_suite"],
+            cwd=PROJECT_ROOT, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=180, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"passed": False}
+    return {"passed": result.returncode == 0}
 
 
 # ============================================================
@@ -1211,6 +1232,18 @@ def finalize_development(
 
         day = get_current_day()
         version = get_current_version()
+        project = get_project_info()
+
+        # A completed day must never be finalized again. Reconcile the
+        # separately read lifecycle fields before any repository mutation.
+        if (type(project) is not dict
+                or project.get("status") != "development"
+                or type(project.get("current_day")) is not int
+                or project.get("current_day") != day
+                or project.get("version") != version):
+            raise RuntimeError(
+                "An active and consistent development day is required."
+            )
 
         if (
             day is None
@@ -1356,6 +1389,11 @@ def finalize_development(
         print(
             "Dependency check: PASSED"
         )
+
+        print("\n5. Running required security regressions...")
+        if _run_security_regressions().get("passed") is not True:
+            raise RuntimeError("Security regression checks failed or could not complete.")
+        print("Security regressions: PASSED")
 
         # ----------------------------------------------------
         # DRY RUN ENDS HERE

@@ -10,6 +10,7 @@ from execution.execution_history import ExecutionHistory
 from execution.execution_router import ExecutionRouter
 from execution.runtime import execute_command, execute_plan
 from tools.tool_registry import TOOLS, execute_tool
+from execution.safe_failure import ErrorCode, MESSAGES
 
 
 PLAN = {"tool": "open_calculator", "arguments": {}}
@@ -32,7 +33,7 @@ def test_successful_routed_execution():
     names = [event["event_type"] for event in events]
     assert names.index("state_observed") < names.index("postconditions_passed")
     assert names.index("postconditions_passed") < names.index("task_completed")
-    assert next(e["details"] for e in events if e["event_type"] == "state_observed") == OBSERVATION
+    assert next(e["details"] for e in events if e["event_type"] == "state_observed") == {"calculator_open": True}
 
 
 def test_unknown_tool_rejected():
@@ -92,7 +93,7 @@ def test_failed_real_world_verification():
          patch("desktop.application_observer.observe_calculator", return_value={"calculator_open": False}):
         task = execute_plan("test", PLAN, history=history)
     assert task.status.value == "failed"
-    assert "verification" in task.error
+    assert task.error == MESSAGES[ErrorCode.VERIFICATION_FAILED]
     names = [e["event_type"] for e in history.all_events()]
     assert "postconditions_failed" in names and "task_completed" not in names
 
@@ -101,7 +102,8 @@ def test_observation_exception_fails_closed():
     with patch("tools.system_tools._open_calculator", return_value=True), \
          patch("desktop.application_observer.observe_calculator", side_effect=RuntimeError("unavailable")):
         task = execute_plan("test", PLAN)
-    assert task.status.value == "failed" and "observation failed" in task.error
+    assert task.status.value == "failed"
+    assert task.error == MESSAGES[ErrorCode.VERIFICATION_FAILED]
 
 
 def test_policy_permission_and_confirmation_blocking():
@@ -164,7 +166,8 @@ def test_generic_calculator_launch_requires_observation():
          patch("tools.system_tools._launch_application", return_value=True) as launch, \
          patch("desktop.application_observer.observe_calculator", return_value={"calculator_open": False}):
         task = execute_plan("Calculator", {"tool": "launch_application", "arguments": arguments})
-    assert task.status.value == "failed" and "verification" in task.error
+    assert task.status.value == "failed"
+    assert task.error == MESSAGES[ErrorCode.VERIFICATION_FAILED]
     launch.assert_called_once_with(**arguments)
 
 

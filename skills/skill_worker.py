@@ -1,62 +1,10 @@
-import importlib.util
 import json
 import sys
-from pathlib import Path
 
 
 def execute_skill(entrypoint_path):
-    """
-    Load and execute one skill entrypoint.
-
-    This file is designed to run as a separate Python process.
-    """
-
-    entrypoint = Path(entrypoint_path).resolve()
-
-    if not entrypoint.exists():
-        raise RuntimeError(
-            "Skill entrypoint does not exist."
-        )
-
-    specification = (
-        importlib.util.spec_from_file_location(
-            "runtime_skill",
-            entrypoint,
-        )
-    )
-
-    if (
-        specification is None
-        or specification.loader is None
-    ):
-        raise RuntimeError(
-            "Could not load skill module."
-        )
-
-    module = (
-        importlib.util.module_from_spec(
-            specification
-        )
-    )
-
-    specification.loader.exec_module(
-        module
-    )
-
-    run_function = getattr(
-        module,
-        "run",
-        None,
-    )
-
-    if not callable(run_function):
-        raise RuntimeError(
-            "Skill must provide run()."
-        )
-
-    result = run_function()
-
-    return result
+    """Direct invocation cannot bypass the disabled parent launcher."""
+    raise RuntimeError("Skill execution requires an OS-isolated worker.")
 
 
 def main():
@@ -100,7 +48,8 @@ def main():
             json.dumps(
                 {
                     "success": False,
-                    "error": str(error),
+                    "error": "Skill execution requires an OS-isolated worker.",
+                    "error_code": "backend_unavailable",
                 }
             )
         )

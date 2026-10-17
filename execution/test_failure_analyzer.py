@@ -86,8 +86,7 @@ def test_routing_analysis():
     report = make_report(
         stage="execution",
         error=(
-            "No execution backend registered "
-            "for agent: desktop"
+            "No execution backend registered for this operation."
         ),
     )
 

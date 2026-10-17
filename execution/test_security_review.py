@@ -115,7 +115,7 @@ def test_runtime_history_redacts_intent_and_argument_values():
     assert task.status.value == "waiting_for_user"
     evidence = str(history.all_events())
     assert "synthetic-private" not in evidence
-    assert REDACTED in evidence
+    assert "arguments" not in evidence and "goal" not in evidence
 
 
 def test_observer_exception_does_not_leak_into_history_or_errors():
@@ -210,10 +210,17 @@ def test_observer_requests_titleless_metadata():
 
 
 def test_finalizer_document_exception_is_exact():
-    from knowledge.development_finalizer import _classify_path
+    from knowledge.development_finalizer import _classify_path, ALLOWED_DOCUMENTATION_FILES
 
-    assert _classify_path("docs/runtime-integration.md") == "source"
-    for path in ("docs/other.md", "docs/sub/runtime-integration.md", "docs/runtime-integration.md.bak"):
+    expected = {"docs/runtime-integration.md", "docs/day16-integration.md", "docs/security-architecture.md"}
+    assert ALLOWED_DOCUMENTATION_FILES == expected
+    for path in expected:
+        assert _classify_path(path) == "source"
+        assert _classify_path(path + ".bak") == "unknown"
+        assert _classify_path(path.replace("docs/", "docs/sub/")) == "unknown"
+    for path in ("docs/other.md", "docs/day17-integration.md", "docs/security-architecture.txt",
+                 "docs/../docs/day16-integration.md", "docs//day16-integration.md",
+                 "C:/AI-agent/docs/day16-integration.md"):
         assert _classify_path(path) == "unknown"
     for path in ("docs/.env", "execution/credentials.json", "runtime/calculator_smoke.json", "docs/test.key"):
         assert _classify_path(path) == "blocked"
@@ -234,9 +241,15 @@ def test_dry_run_never_calls_finalization_mutations():
     with ExitStack() as stack:
         for name, value in {
             "get_current_day": 14, "get_current_version": "0.013",
+"get_project_info": {
+    "current_day": 14,
+    "version": "0.013",
+    "status": "development",
+},
             "classify_repository_changes": {"source": ["main.py"], "blocked": [], "unknown": []},
             "_verify_core_repository": None, "_verify_context_repository": None,
             "_compile_project": {"passed": True}, "_check_dependencies": {"passed": True},
+            "_run_security_regressions": {"passed": True},
         }.items():
             stack.enter_context(patch.object(finalizer, name, return_value=value))
         mutations = [stack.enter_context(patch.object(finalizer, name)) for name in (

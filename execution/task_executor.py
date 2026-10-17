@@ -7,6 +7,7 @@ from execution.execution_router import ExecutionRouter
 from execution.task import Task
 from execution.task_state import StepStatus, TaskStatus
 from execution.task_step import TaskStep
+from execution.safe_failure import SafeFailure, ErrorCode, MESSAGES, safe_result
 
 
 ActionHandler = Callable[
@@ -25,6 +26,17 @@ class StepExecutionResult:
     success: bool
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    failure: Optional[SafeFailure] = None
+
+    def __post_init__(self):
+        outcome = safe_result(self.result)
+        if (self.success is not True or self.error not in (None, "") or self.failure is not None
+                or (outcome and any(value is False for value in outcome.values()))):
+            failure = self.failure if isinstance(self.failure, SafeFailure) else SafeFailure(ErrorCode.EXECUTION_FAILED, "execution")
+            object.__setattr__(self, "success", False)
+            object.__setattr__(self, "failure", failure)
+            object.__setattr__(self, "error", failure.message)
+        object.__setattr__(self, "result", outcome)
 
 
 class TaskExecutor:
@@ -177,38 +189,23 @@ class TaskExecutor:
         try:
             state = self._get_state()
 
-        except RuntimeError as exc:
-            return (
-                f"{phase} state observation failed: {exc}"
-            )
+        except Exception:
+            return MESSAGES[ErrorCode.PRECONDITION_FAILED if phase == "Precondition" else ErrorCode.VERIFICATION_FAILED]
 
-        evaluation = (
-            self._condition_evaluator.evaluate_all(
+        try:
+            evaluation = self._condition_evaluator.evaluate_all(
                 conditions=conditions,
                 state=state,
             )
-        )
+        except Exception:
+            return MESSAGES[ErrorCode.PRECONDITION_FAILED if phase == "Precondition" else ErrorCode.VERIFICATION_FAILED]
 
         if evaluation.passed:
             return None
 
-        if evaluation.results:
-
-            failed = evaluation.results[-1]
-
-            return (
-                f"{phase} failed: "
-                f"type={failed.condition_type}, "
-                f"key={failed.key}, "
-                f"expected={failed.expected!r}, "
-                f"observed={failed.observed!r}, "
-                f"reason={failed.reason}"
-            )
-
-        return (
-            f"{phase} failed: "
-            f"{evaluation.error or 'Unknown condition failure.'}"
-        )
+        # Never put expected/observed state values or caller-defined keys in
+        # task errors: history and failure reports may retain those strings.
+        return MESSAGES[ErrorCode.PRECONDITION_FAILED if phase == "Precondition" else ErrorCode.VERIFICATION_FAILED]
 
     def _normalize_raw_result(
         self,
@@ -225,6 +222,9 @@ class TaskExecutor:
                     "Expected a dictionary."
                 ),
             )
+
+        if set(raw_result) - {"success", "result", "error"}:
+            return StepExecutionResult(success=False, error="Invalid action result fields.")
 
         success = raw_result.get("success")
 
@@ -294,6 +294,7 @@ class TaskExecutor:
 
             return StepExecutionResult(
                 success=False,
+                failure=SafeFailure(ErrorCode.BACKEND_UNAVAILABLE, "routing"),
                 error=(
                     "No registered local action handler for: "
                     f"{step.action}"
@@ -329,6 +330,7 @@ class TaskExecutor:
 
             return StepExecutionResult(
                 success=False,
+                failure=SafeFailure(ErrorCode.BACKEND_UNAVAILABLE, "routing"),
                 error=(
                     "Step requires routed execution but "
                     "no ExecutionRouter is configured."
@@ -345,6 +347,7 @@ class TaskExecutor:
             success=route_result.success,
             result=route_result.result,
             error=route_result.error,
+            failure=route_result.failure,
         )
 
     def _execute_step(
@@ -485,7 +488,7 @@ class TaskExecutor:
                             task,
                             step=step,
                             details={
-                                "arguments": step.arguments,
+                                "arguments": {key: "[REDACTED]" for key in step.arguments},
                                 "reason": step.error,
                             },
                         )
@@ -519,7 +522,7 @@ class TaskExecutor:
                     task,
                     step=step,
                     details={
-                        "conditions": step.preconditions,
+                        "condition_count": len(step.preconditions),
                     },
                 )
 
@@ -546,10 +549,7 @@ class TaskExecutor:
                 )
 
                 task.mark_failed(
-                    (
-                        f"Step {step.step_id} blocked: "
-                        f"{precondition_error}"
-                    )
+                    precondition_error
                 )
 
                 self._record_event(
@@ -592,7 +592,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "arguments": step.arguments,
+                    "arguments": {key: "[REDACTED]" for key in step.arguments},
                 },
             )
 
@@ -618,15 +618,12 @@ class TaskExecutor:
                     step=step,
                     details={
                         "error": error,
-                        "result": execution_result.result,
+                        "result_present": execution_result.result is not None,
                     },
                 )
 
                 task.mark_failed(
-                    (
-                        f"Step {step.step_id} failed: "
-                        f"{error}"
-                    )
+                    error
                 )
 
                 self._record_event(
@@ -655,7 +652,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "result": execution_result.result,
+                    "result_present": execution_result.result is not None,
                 },
             )
 
@@ -670,7 +667,7 @@ class TaskExecutor:
                     task,
                     step=step,
                     details={
-                        "conditions": step.postconditions,
+                        "condition_count": len(step.postconditions),
                     },
                 )
 
@@ -698,11 +695,7 @@ class TaskExecutor:
                 )
 
                 task.mark_failed(
-                    (
-                        f"Step {step.step_id} failed "
-                        f"verification: "
-                        f"{postcondition_error}"
-                    )
+                    postcondition_error
                 )
 
                 self._record_event(
@@ -747,7 +740,7 @@ class TaskExecutor:
                 task,
                 step=step,
                 details={
-                    "result": step.result,
+                    "result_present": step.result is not None,
                 },
             )
 
@@ -766,7 +759,7 @@ class TaskExecutor:
             "task_completed",
             task,
             details={
-                "result": task.result,
+                "completed_steps": len(task.steps),
             },
         )
 

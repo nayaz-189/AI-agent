@@ -322,7 +322,10 @@ def run_agent():
         # -------------------------
 
         if task.status == TaskStatus.COMPLETED:
-            if task.steps[0].agent == "desktop_document":
+            if task.steps[0].agent == "research":
+                from execution.orchestrator import completion_report
+                print(completion_report(task, history=history))
+            elif task.steps[0].agent == "desktop_document":
                 print("Test document edited, exported and independently verified. Notepad remains unsaved.")
             elif task.steps[0].postconditions:
                 print("Calculator is open (independently verified).")

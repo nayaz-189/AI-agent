@@ -1,5 +1,6 @@
 import hashlib
 import json
+from knowledge.public_context_schema import load_public_json
 from datetime import datetime
 from pathlib import Path
 
@@ -133,7 +134,7 @@ def create_publication_package():
 
     try:
 
-        context = json.loads(
+        context = load_public_json(
             EXPORT_PATH.read_text(
                 encoding="utf-8"
             )
@@ -145,10 +146,13 @@ def create_publication_package():
             "published": False,
             "reason":
                 (
-                    "External context could not "
-                    f"be read: {error}"
+                    "External context could not be read."
                 ),
         }
+
+    from knowledge.external_context_exporter import security_scan
+    if security_scan(context)["safe"] is not True:
+        return {"published": False, "reason": "External context schema/privacy validation failed."}
 
     project = context.get(
         "project",
@@ -284,7 +288,7 @@ def verify_publication_package():
 
     try:
 
-        manifest = json.loads(
+        manifest = load_public_json(
             MANIFEST_PATH.read_text(
                 encoding="utf-8"
             )
@@ -296,10 +300,12 @@ def verify_publication_package():
             "valid": False,
             "reason":
                 (
-                    "Publication manifest could "
-                    f"not be read: {error}"
+                    "Publication manifest could not be read."
                 ),
         }
+
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("artifacts"), dict) or not isinstance(manifest["artifacts"].get("external_project_context"), dict):
+        return {"valid": False, "reason": "Invalid publication manifest."}
 
     expected_hash = (
         manifest.get(
@@ -315,11 +321,10 @@ def verify_publication_package():
         )
     )
 
-    actual_hash = (
-        calculate_sha256(
-            EXPORT_PATH
-        )
-    )
+    try:
+        actual_hash = calculate_sha256(EXPORT_PATH)
+    except Exception:
+        return {"valid": False, "reason": "External context could not be read."}
 
     if not expected_hash:
 
@@ -336,13 +341,20 @@ def verify_publication_package():
             "reason":
                 "External context integrity check failed.",
 
-            "expected_sha256":
-                expected_hash,
-
-            "actual_sha256":
-                actual_hash,
         }
 
+    # A matching hash proves consistency, not privacy or publisher identity.
+    from knowledge.external_context_exporter import security_scan
+    try:
+        context = load_public_json(EXPORT_PATH.read_text(encoding="utf-8"))
+        safe = security_scan(context)["safe"] is True
+    except Exception:
+        safe = False
+    if not safe:
+        return {"valid": False, "reason": "External context schema/privacy validation failed."}
+    from knowledge.public_context_schema import valid_public_manifest
+    if not valid_public_manifest(manifest, context, actual_hash):
+        return {"valid": False, "reason": "Publication manifest schema validation failed."}
     return {
         "valid": True,
         "reason":

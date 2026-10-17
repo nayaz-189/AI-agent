@@ -47,7 +47,7 @@ EXPORT_PATH = (
     / "external_project_context.json"
 )
 
-EXPORT_SCHEMA_VERSION = "1.0"
+EXPORT_SCHEMA_VERSION = "2.0"
 
 
 # ============================================================
@@ -185,6 +185,10 @@ def security_scan(
     external_context,
 ):
     findings = []
+    from knowledge.public_context_schema import valid_public_context
+    if not valid_public_context(external_context):
+        # Even attacker-controlled key names must not enter diagnostic output.
+        return {"safe": False, "findings": [{"type": "invalid_public_context_schema"}]}
 
     findings.extend(
         scan_for_sensitive_keys(
@@ -211,332 +215,54 @@ def security_scan(
 # ALLOWLIST BUILDERS
 # ============================================================
 
-def build_repository_view(
-    internal_context,
-):
-    repository = (
-        internal_context.get(
-            "repository",
-            {},
-        )
-    )
-
-    return {
-        "branch":
-            repository.get(
-                "branch"
-            ),
-
-        "short_commit":
-            repository.get(
-                "short_commit"
-            ),
-    }
+def build_repository_view(internal_context):
+    repository = internal_context.get("repository", {})
+    branch = repository.get("branch")
+    commit = repository.get("short_commit", "")
+    return {"branch": branch if branch in {"main", "review/day15-privacy-hardening"} else "other",
+            "short_commit": commit if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{7,40}", commit) else None}
 
 
-def build_project_view(
-    internal_context,
-):
-    state = (
-        internal_context.get(
-            "project_state",
-            {},
-        )
-    )
-
-    project = state.get(
-        "project",
-        {},
-    )
-
-    return {
-        "name":
-            project.get(
-                "name"
-            ),
-
-        "version":
-            project.get(
-                "version"
-            ),
-
-        "current_day":
-            project.get(
-                "current_day"
-            ),
-
-        "status":
-            project.get(
-                "status"
-            ),
-    }
+def build_project_view(internal_context):
+    project = internal_context.get("project_state", {}).get("project", {})
+    version, day, status = project.get("version"), project.get("current_day"), project.get("status")
+    return {"name": "AI Agent", "version": version if isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", version) else None,
+            "current_day": day if type(day) is int and 0 <= day <= 10000 else None,
+            "status": status if status in {"development", "completed"} else "unknown"}
 
 
-def build_architecture_view(
-    internal_context,
-):
-    state = (
-        internal_context.get(
-            "project_state",
-            {},
-        )
-    )
-
-    architecture = state.get(
-        "architecture",
-        {},
-    )
-
-    # Architecture is intentionally copied only from the
-    # project's documented state, not from runtime secrets
-    # or internal process memory.
-
-    return architecture
+def build_architecture_view(internal_context):
+    from knowledge.source_indexer import SOURCE_ROOTS
+    return {"source_roots": sorted(SOURCE_ROOTS)}
 
 
-def build_capability_view(
-    internal_context,
-):
-    canonical = (
-        internal_context.get(
-            "canonical_knowledge",
-            {},
-        )
-    )
-
-    capabilities = (
-        canonical.get(
-            "capabilities",
-            []
-        )
-    )
-
-    result = []
-
-    for capability in capabilities:
-
-        result.append(
-            {
-                "name":
-                    capability.get(
-                        "name"
-                    ),
-
-                "description":
-                    capability.get(
-                        "description"
-                    ),
-
-                "component":
-                    capability.get(
-                        "component"
-                    ),
-
-                "status":
-                    capability.get(
-                        "status"
-                    ),
-            }
-        )
-
-    return result
+def build_capability_view(internal_context):
+    from execution.audit_schema import ACTIONS
+    return [{"name": name} for name in sorted(ACTIONS)]
 
 
-def build_skill_view(
-    internal_context,
-):
-    canonical = (
-        internal_context.get(
-            "canonical_knowledge",
-            {},
-        )
-    )
-
-    skills = canonical.get(
-        "skills",
-        [],
-    )
-
-    result = []
-
-    for skill in skills:
-
-        result.append(
-            {
-                "name":
-                    skill.get(
-                        "name"
-                    ),
-
-                "description":
-                    skill.get(
-                        "description"
-                    ),
-
-                "skill_version":
-                    skill.get(
-                        "skill_version"
-                    ),
-
-                "status":
-                    skill.get(
-                        "status"
-                    ),
-
-                "risk_level":
-                    skill.get(
-                        "risk_level"
-                    ),
-            }
-        )
-
-    return result
+def build_skill_view(internal_context):
+    # Arbitrary skill descriptions and canonical runtime records are private.
+    return []
 
 
-def build_source_interface_view(
-    internal_context,
-):
-    source_index = (
-        internal_context.get(
-            "source_index",
-            {},
-        )
-    )
-
-    modules = source_index.get(
-        "modules",
-        [],
-    )
-
-    external_modules = []
-
-    for module in modules:
-
-        external_modules.append(
-            {
-                "path":
-                    module.get(
-                        "path"
-                    ),
-
-                "parse_success":
-                    module.get(
-                        "parse_success"
-                    ),
-
-                "functions": [
-                    {
-                        "name":
-                            function.get(
-                                "name"
-                            ),
-
-                        "signature":
-                            function.get(
-                                "signature"
-                            ),
-                    }
-                    for function
-                    in module.get(
-                        "functions",
-                        []
-                    )
-                ],
-
-                "classes": [
-                    {
-                        "name":
-                            class_record.get(
-                                "name"
-                            ),
-
-                        "methods": [
-                            {
-                                "name":
-                                    method.get(
-                                        "name"
-                                    ),
-
-                                "signature":
-                                    method.get(
-                                        "signature"
-                                    ),
-                            }
-                            for method
-                            in class_record.get(
-                                "methods",
-                                []
-                            )
-                        ],
-                    }
-                    for class_record
-                    in module.get(
-                        "classes",
-                        []
-                    )
-                ],
-            }
-        )
-
-    return {
-        "statistics":
-            source_index.get(
-                "statistics",
-                {},
-            ),
-
-        "modules":
-            external_modules,
-    }
+def build_source_interface_view(internal_context):
+    from knowledge.source_indexer import source_path_allowed
+    modules = {}
+    for module in internal_context.get("source_index", {}).get("modules", []):
+        if not isinstance(module, dict) or not source_path_allowed(module.get("path")):
+            continue
+        path = module["path"]
+        modules[path] = {"path": path, "parse_success": module.get("parse_success") is True,
+                         "function_count": len(module.get("functions", [])),
+                         "class_count": len(module.get("classes", []))}
+    return {"statistics": {"python_files": len(modules)}, "modules": [modules[k] for k in sorted(modules)]}
 
 
-def build_development_view(
-    internal_context,
-):
-    canonical = (
-        internal_context.get(
-            "canonical_knowledge",
-            {},
-        )
-    )
-
-    return {
-        "summary":
-            canonical.get(
-                "summary",
-                {},
-            ),
-
-        "decisions":
-            canonical.get(
-                "decisions",
-                [],
-            ),
-
-        "bugs":
-            canonical.get(
-                "bugs",
-                [],
-            ),
-
-        "tests":
-            canonical.get(
-                "tests",
-                [],
-            ),
-
-        "research_sources":
-            canonical.get(
-                "research_sources",
-                [],
-            ),
-
-        "upgrades":
-            canonical.get(
-                "upgrades",
-                [],
-            ),
-    }
+def build_development_view(internal_context):
+    canonical = internal_context.get("canonical_knowledge", {})
+    return {key + "_count": len(canonical.get(key, [])) if isinstance(canonical.get(key), list) else 0
+            for key in ("decisions", "bugs", "tests", "research_sources", "upgrades")}
 
 
 # ============================================================

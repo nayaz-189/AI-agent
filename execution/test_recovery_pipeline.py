@@ -39,6 +39,7 @@ def test_failed_task_remains_failed():
         steps=[
             TaskStep(
                 action="route_test",
+                agent="unavailable",
             )
         ],
     )
@@ -97,6 +98,7 @@ def test_recovery_creates_planning_request():
         steps=[
             TaskStep(
                 action="route_test",
+                agent="unavailable",
             )
         ],
     )
@@ -148,6 +150,7 @@ def test_planning_request_is_not_executable():
         steps=[
             TaskStep(
                 action="route_test",
+                agent="unavailable",
             )
         ],
     )
@@ -204,6 +207,7 @@ def test_new_request_has_lineage():
         steps=[
             TaskStep(
                 action="route_test",
+                agent="unavailable",
             )
         ],
     )

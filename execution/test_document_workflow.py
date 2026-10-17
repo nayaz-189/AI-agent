@@ -130,6 +130,21 @@ def test_success_through_planner_runtime_router_gate_and_semantic_controller():
     assert session.files.closed
 
 
+def test_notepad_newlines_prepared_before_consent_and_exact_verification():
+    session = NotepadTestSession("first\nsecond\r\nthird\r")
+    assert session.content == "first\rsecond\rthird\r"
+    fake = opened()
+    fake.content = session.content
+    request = fake.edit_request()
+    assert request["arguments"]["new_value"] == "first\rsecond\rthird\r"
+    fake.control.CurrentValue = fake.content
+    assert fake.state()["content_matches"] is True
+    fake.control.CurrentValue += "\r"
+    assert fake.state()["content_matches"] is False
+    fake.control.CurrentValue = "first\nsecond\nthird\n"
+    assert fake.state()["content_matches"] is False
+
+
 def test_missing_confirmation_stops_before_launch():
     task, session, _ = run(ui=None)
     assert task.status.value == "failed" and session.binding is None

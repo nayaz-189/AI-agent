@@ -256,12 +256,7 @@ def test_secret_never_appears_in_history():
         if event["event_type"] == "step_started"
     )
 
-    arguments = (
-        step_started["details"]["arguments"]
-    )
-
-    assert arguments["password"] == REDACTED
-    assert arguments["api_key"] == REDACTED
+    assert "arguments" not in step_started["details"]
 
     print("TEST 4: PASSED")
 
@@ -354,10 +349,46 @@ def main():
     print("TEST 5: Changed-state evidence")
     test_changed_state_history()
 
+    print("TEST 6: Condition evidence stays private")
+    test_condition_values_do_not_leak_into_history()
+
+    print("TEST 7: Action results stay private")
+    test_action_result_values_are_not_in_event_history()
+
     print()
     print("================================")
     print(" ALL TASK HISTORY TESTS PASSED")
     print("================================")
+
+
+def test_condition_values_do_not_leak_into_history():
+    reset()
+    private_value = "PRIVATE_CONDITION_SENTINEL_481"
+    STATE["document"] = private_value
+    history = ExecutionHistory()
+    executor = TaskExecutor(state_provider=state_provider, execution_history=history)
+    task = Task(goal="Safe failed condition", steps=[TaskStep(
+        action="never_executed",
+        preconditions=[{"type": "state_equals", "key": "document", "expected": "EXPECTED_SECRET_482"}],
+    )])
+    executor.execute(task)
+    assert task.status.value == "failed"
+    evidence = repr(history.all_events()) + repr(task.error)
+    assert private_value not in evidence
+    assert "EXPECTED_SECRET_482" not in evidence
+
+
+def test_action_result_values_are_not_in_event_history():
+    reset()
+    history = ExecutionHistory()
+    executor = TaskExecutor(execution_history=history)
+    executor.register_action("sample", lambda arguments: {
+        "success": True, "result": {"unclassified_output": "PRIVATE_RESULT_SENTINEL_483"}
+    })
+    task = Task(goal="Safe result evidence", steps=[TaskStep(action="sample")])
+    executor.execute(task)
+    assert task.status.value == "completed"
+    assert "PRIVATE_RESULT_SENTINEL_483" not in repr(history.all_events())
 
 
 if __name__ == "__main__":

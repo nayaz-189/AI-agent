@@ -3,6 +3,8 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 from execution.failure_report import FailureReport
+from execution.safe_failure import ErrorCode, MESSAGES
+from execution.audit_schema import safe_id, safe_action, safe_agent
 
 
 class FailureCategory(str, Enum):
@@ -38,14 +40,14 @@ class FailureAnalysis:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "task_id": self.task_id,
-            "failed_step_id": self.failed_step_id,
+            "task_id": safe_id(self.task_id),
+            "failed_step_id": safe_id(self.failed_step_id),
             "category": self.category.value,
             "disposition": self.disposition.value,
-            "diagnosis": self.diagnosis,
-            "recommendation": self.recommendation,
-            "agent": self.agent,
-            "action": self.action,
+            "diagnosis": "Failure category: " + self.category.value,
+            "recommendation": "Recovery disposition: " + self.disposition.value,
+            "agent": safe_agent(self.agent),
+            "action": safe_action(self.action),
             "confidence": self.confidence,
         }
 
@@ -90,8 +92,6 @@ class FailureAnalyzer:
             if isinstance(report.error, str)
             else ""
         )
-
-        error_lower = error.lower()
 
         # ---------------------------------
         # PRECONDITION FAILURE
@@ -150,16 +150,7 @@ class FailureAnalyzer:
         # ROUTING FAILURE
         # ---------------------------------
 
-        routing_signatures = (
-            "no execution backend registered",
-            "no executionrouter is configured",
-            "no registered local action handler",
-        )
-
-        if any(
-            signature in error_lower
-            for signature in routing_signatures
-        ):
+        if (report.failure is not None and report.failure.code == ErrorCode.BACKEND_UNAVAILABLE) or error == MESSAGES[ErrorCode.BACKEND_UNAVAILABLE]:
 
             return FailureAnalysis(
                 task_id=report.task_id,
