@@ -1,8 +1,8 @@
-"""Cross-device contract and bounded in-memory receiver; no network listener.
+"""Cross-device contract and journal-backed receiver; no implicit network listener.
 
 AuthenticatedTransport is a trusted adapter boundary, NOT authentication supplied
-by a model or JSON flag. The only production adapter denies all delivery. A real
-adapter needs pairing, peer authentication, durable replay storage and OS review.
+by a model or JSON flag. The default adapter denies all delivery. The optional
+TLS adapter must be explicitly composed by the local device_server command.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ from time import time
 from uuid import UUID
 
 from execution.safe_failure import ErrorCode
+from execution.replay_journal import ReplayJournal, JournalError
 
 
 class DeliveryStatus(str, Enum):
@@ -39,6 +40,10 @@ class VerifiedDelivery:
 
 
 class AuthenticatedTransport(ABC):
+    def authorize_dispatch(self, peer_id):
+        """Recheck live authorization immediately before claiming/executing."""
+        return False
+
     @abstractmethod
     def receive_verified(self):
         """Return VerifiedDelivery or None, never caller-asserted identity."""
@@ -114,28 +119,28 @@ def _execute_calculator():
 class DeviceReceiver:
     """Trusted composition API, never installed in the planner tool registry.
 
-    Peer registration is supplied by a future authenticated pairing store. No
-    registration endpoint exists. Records are bounded, process-local and never
-    evicted to make room; this is not restart-safe production replay protection.
+    Peer registration and a journal must be explicitly supplied by trusted local
+    composition. No registration endpoint exists. No database is opened/created
+    by default. Persisted
+    queued tasks require authenticated redelivery after restart; storage is not
+    authority to execute. The default transport remains unavailable.
     """
-    def __init__(self, transport=None, *, registered_peers=(), clock=time):
+    def __init__(self, transport=None, *, registered_peers=(), clock=time, journal=None):
         self._transport = transport if transport is not None else UnavailableTransport()
         if not isinstance(self._transport, AuthenticatedTransport):
             raise TypeError("A trusted transport adapter is required.")
         self._peers = frozenset(_uuid(peer) for peer in registered_peers)
         self._clock = clock
-        self._records = {}
+        if journal is not None and type(journal) is not ReplayJournal:
+            raise TypeError("A trusted replay journal is required.")
+        self._journal = journal
+        self._journal_failed = False
+        self._pending = {}  # Only requests received through this live transport.
         self._lock = RLock()
 
     @staticmethod
     def _denial(task_id=None, code=ErrorCode.PERMISSION_DENIED):
         return {"task_id": task_id, "status": "failed", "verified": False, "error_code": code.value}
-
-    @staticmethod
-    def _ack(record):
-        return {"task_id": record["task"].task_id, "status": record["status"].value,
-                "verified": record["status"] == DeliveryStatus.COMPLETED,
-                "error_code": record["error"]}
 
     def receive(self):
         with self._lock:
@@ -146,39 +151,61 @@ class DeviceReceiver:
                 task, hold = DeviceTask.parse(delivery.body, delivery.peer_id, self._clock())
                 if task.target_device != "windows":
                     return self._denial(task.task_id, ErrorCode.BACKEND_UNAVAILABLE)
-                key = (delivery.peer_id, task.task_id)
-                prior = self._records.get(key)
-                if prior is not None:
-                    if prior["task"].fingerprint != task.fingerprint:
-                        return self._denial(task.task_id)
-                    return self._ack(prior)  # A duplicate never dispatches again.
-                if len(self._records) >= 128:
+                if self._journal is None or self._journal_failed:
                     return self._denial(task.task_id, ErrorCode.BACKEND_UNAVAILABLE)
-                self._records[key] = {"task": task, "status": DeliveryStatus.WAITING if hold else DeliveryStatus.QUEUED,
-                                      "error": None}
-                return self._ack(self._records[key])
+                key = (delivery.peer_id, task.task_id)
+                receipt = self._journal.accept(task, hold, self._clock())
+                if receipt is None:
+                    return self._denial(task.task_id)
+                if receipt["status"] in {"queued", "waiting"}:
+                    self._pending[key] = task.fingerprint
+                return receipt
+            except JournalError:
+                self._journal_failed = True
+                return self._denial(code=ErrorCode.BACKEND_UNAVAILABLE)
             except Exception:
                 return self._denial()
 
     def dispatch_pending(self, *, online=False):
-        """Local scheduler only. Untrusted JSON cannot dispatch or release holds."""
+        """Trusted scheduler; no message-based approval release."""
         with self._lock:
-            for record in self._records.values():
-                if record["status"] not in {DeliveryStatus.QUEUED, DeliveryStatus.WAITING}:
-                    continue
-                if self._clock() >= record["task"].expires_at:
-                    record.update(status=DeliveryStatus.FAILED, error=ErrorCode.PRECONDITION_FAILED.value)
-                elif online is True and record["status"] == DeliveryStatus.QUEUED:
-                    record["status"] = DeliveryStatus.RUNNING
-                    try:
-                        outcome = _execute_calculator()
-                        verified = type(outcome) is VerifiedOutcome and outcome.verified is True
-                    except Exception:
-                        verified = False
-                    record.update(status=DeliveryStatus.COMPLETED if verified else DeliveryStatus.FAILED,
-                                  error=None if verified else ErrorCode.VERIFICATION_FAILED.value)
-            return [self._ack(r) for r in self._records.values()]
+            if self._journal_failed:
+                return [self._denial(code=ErrorCode.BACKEND_UNAVAILABLE)]
+            if self._journal is None:
+                return []
+            try:
+                if online is True:
+                    for (peer, task_id), fingerprint in list(self._pending.items()):
+                        if self._transport.authorize_dispatch(peer) is not True:
+                            return [self._denial(task_id)]
+                        claim = self._journal.claim(peer, task_id, fingerprint, self._clock())
+                        if claim is None:
+                            continue
+                        # The claim transaction has COMMITTED before any action.
+                        # Process death (including BaseException) leaves a durable,
+                        # non-retryable claim; no finally block resets it to queued.
+                        try:
+                            if self._transport.authorize_dispatch(peer) is not True:
+                                raise PermissionError()
+                            outcome = _execute_calculator()
+                            verified = type(outcome) is VerifiedOutcome and outcome.verified is True
+                        except Exception:
+                            verified = False
+                        self._journal.finish(peer, task_id, claim, verified)
+                        self._pending.pop((peer, task_id), None)
+                return self._journal.receipts(self._peers, self._clock())
+            except JournalError:
+                self._journal_failed = True
+                return [self._denial(code=ErrorCode.BACKEND_UNAVAILABLE)]
 
     def history(self):
         with self._lock:
-            return [self._ack(r) for r in self._records.values()]
+            if self._journal_failed:
+                return [self._denial(code=ErrorCode.BACKEND_UNAVAILABLE)]
+            if self._journal is None:
+                return []
+            try:
+                return self._journal.receipts(self._peers, self._clock())
+            except JournalError:
+                self._journal_failed = True
+                return [self._denial(code=ErrorCode.BACKEND_UNAVAILABLE)]

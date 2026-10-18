@@ -1,8 +1,11 @@
 # Day 16: bounded orchestration and device protocol foundation
 
-This implementation sits on the existing review branch and completed Day 15 / 0.015
-lifecycle. No lifecycle transition, commit, push, merge, finalizer, installation or
-Windows security change was performed. It is a review candidate, not a new stable release.
+Day 16 was integrated through PR #1 and finalized as v0.016 at `abae60d`.
+Day 17 adds a durable replay journal and an explicitly started, single-device TLS
+Calculator receiver on `main`. Importing modules and normal VORAK startup remain
+offline. Only temporary loopback listeners with mocked OS actions were exercised
+during development. Day 16 and Phase 1 results below are historical; the current
+MVP setup and limitations are in the Day 17 MVP section.
 
 ## Operational workflow
 
@@ -66,7 +69,7 @@ Banking, payments, credentials, OTPs, personal email, private browsing and unrel
 files have no capabilities in these workflows. The existing broader browser tools
 remain blocked by their existing confirmation policy; this work adds no browser approval.
 
-## Device protocol and trust boundary
+## Day 16 / Phase 1 device protocol and trust boundary (historical)
 
 `execution/device_protocol.py` defines strict version-1 JSON parsing, canonical UUID
 task/peer IDs, exact argument shape, a five-minute maximum lifetime and registered
@@ -81,8 +84,9 @@ that already authenticated a peer. Claimed `source_device` must match that chann
 identity and a locally registered peer. A model cannot register a device through
 the tool registry. Constructing a Python delivery object is not cryptographic proof.
 
-The receiver records at most 128 tasks in memory. Identical duplicates return their
-existing acknowledgement; altered reuse is denied. Dispatch is serialized. Offline
+The receiver now requires an explicitly supplied local SQLite test journal, with
+128 records by default. Identical duplicates return their existing acknowledgement;
+altered reuse is denied. Claims are serialized across journal connections. Offline
 tasks stay queued and expire before execution. A caller asking for approval remains
 waiting; there is deliberately no message-based method to release that hold.
 `requires_approval=false` never authorizes a consequential capability. Failed tasks
@@ -90,12 +94,270 @@ are not retried under the same ID. Acknowledgements expose only opaque task IDs,
 queued/running/waiting/completed/failed status, verified boolean and error enum.
 Completion uses the existing runtime and an additional independent observation.
 
-This replay store is process-local and has no restart durability. Capacity exhaustion
-denies new work; records are not evicted to let old IDs execute again. No production
-remote-control claim is made. A real adapter must remain disabled until authenticated
-pairing, durable replay/idempotency, revocation, crash recovery and physical-device
-tests exist. A lost acknowledgement should retry the same ID, never create a new
-operation automatically. A crash during execution requires independent reconciliation.
+Replay records survive process restarts; storage is never authority to dispatch a
+queued request without authenticated redelivery. Capacity exhaustion denies new
+work; records are not evicted to let old IDs execute again. No production remote
+control is enabled. Pairing, authenticated transport, revocation, protected journal
+provisioning and physical-device tests remain unavailable. A lost acknowledgement
+should retry the same ID, never create a new operation automatically. A crash during
+execution requires independent reconciliation; this phase has no retry/reset API.
+
+## Day 17 Phase 1: offline durable replay journal (historical)
+
+`execution/replay_journal.py` uses standard-library SQLite. The production receiver
+still defaults to `UnavailableTransport` and no journal; it creates no storage.
+Only the offline test harness explicitly provisions a fresh database with
+`ReplayJournal.create_for_tests`. Opening existing storage uses SQLite `mode=rw`:
+missing, corrupt or incompatible storage is denied, never silently reinitialized.
+No listener, pairing, credential, environment enable flag or planner tool is added.
+
+Storage is confined to `runtime/device_tests/<temporary-test-directory>/replay.sqlite3`,
+under the Git-ignored runtime directory. Tests clean up their own fixtures. The
+schema contains:
+
+- `metadata`: schema version, random journal generation and fixed capacity.
+- `requests`: composite primary key `(SHA-256 peer ID, canonical task UUID)`,
+  canonical request SHA-256 fingerprint, expiry, state, random local claim ID and
+  controlled error enum. It contains no command body, arguments, raw peer ID,
+  credentials, local context, document text or backend exception message.
+
+The peer digest is pseudonymous, not secret or authentication. Claim IDs are local
+transaction ownership markers, not user consent or pairing credentials. Receipt
+reconstruction exposes only task UUID, status, verified boolean and controlled
+error. Detailed execution history and trusted observation evidence remain in memory;
+the journal persists only the sanitized outcome of that existing observation path.
+
+Each state change uses `BEGIN IMMEDIATE`, uniqueness constraints and a committed
+transaction. SQLite uses rollback journaling (`DELETE`), `synchronous=FULL`, a
+250 ms lock timeout, integrity checks and an 8 MiB file bound. Request identity,
+fingerprint and expiry are immutable. A queued request is committed first, then a
+single-use `running` claim is committed **before** the existing Calculator adapter
+can run. Only that claim can transition to completed/failed. Completion is recorded
+only after the existing runtime and independent Windows observation succeed.
+Database/commit/locking failures stop the receiver with an unverified controlled
+failure; there is no in-memory fallback or success acknowledgement after a failed
+completion commit. A new receiver may reopen intact storage, but cannot reclaim
+a previously committed execution claim.
+
+Crash policy:
+
+- Before a committed claim: no dispatch occurred; authenticated redelivery may
+  claim an unexpired queued request. Stored requests alone are never dispatched.
+- After a committed claim, including before an OS call or after its effect but
+  before recording completion: retain `running` internally and return an unverified
+  failed receipt (`backend_unavailable`). Never automatically dispatch it again.
+  Another live owner may still finish its own claim; opening a journal does not
+  rewrite or steal active claims. This receipt does not prove the OS action failed.
+- Completed/failed requests stay terminal. Approval holds survive restart and
+  cannot be released by changing the message flag. Expired queued/held requests
+  become failed and retain their identities.
+
+Capacity is fixed at provisioning (128 default, 1–1024 allowed). There is no
+automatic pruning, TTL deletion, reset or eviction. Exhaustion denies new requests,
+including when all retained requests expired. SQL triggers reject deletion, altered
+bindings and terminal-state resets. Capacity recovery needs a future reviewed
+peer/key-generation protocol; deleting the journal is not a supported recovery.
+
+Limitations before pairing: SQLite does not provide exactly-once external side
+effects, authenticated storage, backup rollback detection or OS isolation. A crash
+can lose an action or its acknowledgement; conservative non-retry prevents a second
+automatic dispatch, not ambiguity. Guarantees assume intact local storage and
+trusted Python composition. Pre-existing links, reparse points and hardlinks are
+rejected, and live objects pin file identity/generation, but malicious same-user
+path races, restored older databases and host tampering are outside this boundary.
+Windows file permissions are inherited; no dedicated private production ACL, key
+store, encryption or anti-rollback provisioner was installed. Production storage
+and its threat model must be reviewed before any transport is enabled. Physical
+Android, real authentication and real Calculator dispatch are not tested in this
+phase; all device-protocol actions are mocked.
+
+Phase 1 validation (2026-10-18): `execution.test_device_protocol` passed all 24
+tests, including separate-interpreter replay and a child process forcibly exiting
+after its committed claim, concurrent receivers, expiry/approval holds, lock and
+commit faults, corrupt/missing storage, capacity retention and payload privacy.
+`execution.regression_suite` passed all 21 registered modules (211 execution cases,
+including those 24 device cases and 15 source/export cases) plus its six validator
+cases. Standalone `brain.validator` passed 6/6; `knowledge.test_source_security`
+passed 15/15. These repeat checks are not additional unique tests. Compilation of
+`main.py brain execution desktop knowledge tools agents skills providers` and
+`git diff --check` passed. No test failures or skips were observed. No real device
+or Calculator action, lifecycle transition, finalizer, commit or publication was
+performed during Phase 1. The existing test module inventory and finalizer
+allowlist were unchanged. Phase 2 requires separate human review.
+
+## Day 17 MVP: explicit single-device TLS receiver
+
+The requested continuation adds `execution/device_server.py`, a standalone-compatible
+`execution/device_client.py`, and `execution/device_storage.py`. The existing runtime,
+Calculator observer, journal schema/claims, security gates, source allowlists and
+lifecycle are preserved. `UnavailableTransport` remains the default. Only the local
+`python -m execution.device_server serve` command opens a listener; ordinary VORAK
+startup, environment flags and imports do not. No service or startup task is installed.
+
+Local pairing creates a random UUID and 256-bit secret after the operator types
+`PAIR CALCULATOR`. It requires a pre-provisioned TLS certificate. Pairing information
+is transferred through a trusted out-of-band channel; there is no remote pairing
+route and no short-PIN authentication. Only public peer ID and certificate SHA-256
+are printed. The secret stays in the private pairing file, never command-line
+arguments, logs, SQLite receipts, audit exports or Git. There is one device per
+installation and no silent overwrite or automatic rotation.
+
+The client verifies the exact certificate SHA-256 pin obtained out of band before
+sending a request. This is explicit pinning, not trust on first use or CA/hostname
+validation. TLS 1.2 or newer provides encryption; no custom encryption is used.
+HMAC-SHA256, with distinct request/response domains and constant-time comparison,
+authenticates the complete request envelope and response. Each request contains a
+fresh random exchange nonce; the reply binds its receipt to that exact signed
+packet. The durable journal binds the authenticated peer and task UUID to canonical
+command contents, so changing the nonce does not bypass replay protection.
+See Python's [TLS API](https://docs.python.org/3.10/library/ssl.html) and
+[HMAC comparison API](https://docs.python.org/3.10/library/hmac.html).
+
+The server validates authentication before constructing `VerifiedDelivery`. It
+then uses `DeviceReceiver`, the committed journal claim, the existing runtime and
+independent Calculator observation. Pairing authorization is rechecked before the
+claim and again immediately before the OS action. Revocation cannot undo an action
+already executing. All other operations, extra arguments, fake approval flags,
+unregistered peers and malformed messages remain denied. Client receipt validation
+requires the matching task/request, a valid response MAC and consistent completed /
+verified fields. HTTP success or a generic success dictionary is insufficient.
+
+Frames are bounded to 16 KiB, command bodies to 8 KiB, with a five-second handshake
+timeout and an absolute eight-second receive deadline. The single connection worker
+and backlog of four bound concurrency; SQLite still serializes claims across
+independent receivers. The client waits at most 45 seconds for a receipt, and never
+automatically retries. Any uncertain result preserves the exact pending task.
+
+Windows state is confined to ignored `runtime/device_receiver/`. Initialization
+atomically creates an owner/SYSTEM-only directory ACL and a new journal; it refuses
+an existing directory rather than repairing or resetting state. Existing ACLs,
+file ownership, hardlinks and reparse points are checked; insecure state fails
+closed. The Termux client uses `~/.vorak-device`, owner-only directory/file modes
+and link checks. Do not put it on Android shared storage. Credentials are not
+hardware-backed or encrypted at rest by this application; OS access control and
+device encryption protect them. Malicious same-user code, administrator/root
+access, filesystem rollback and race-proof isolation remain outside the boundary.
+
+### Manual Windows setup (not executed during development)
+
+Run from `C:\AI-agent` in your normal interactive Windows account. No elevation is
+needed. Ensure the `runtime` parent already exists. Do not run these commands over
+an untrusted remote terminal or record pairing material in a transcript.
+
+```powershell
+.\.venv\Scripts\python.exe -m execution.device_server init
+```
+
+Using an already installed OpenSSL, generate a local certificate and encrypted
+private key. The Git for Windows OpenSSL location below was available for tests;
+if unavailable, provision a certificate/key with a trusted tool before continuing.
+No installation is performed by VORAK. Keep the key password local.
+
+```powershell
+& 'C:\Program Files\Git\usr\bin\openssl.exe' req -x509 -newkey rsa:3072 -sha256 -days 30 -subj '/CN=VORAK-local' -keyout runtime/device_receiver/server.key -out runtime/device_receiver/server.pem
+```
+
+Replace `192.168.1.10` with your Windows host's actual private LAN IPv4 address.
+The address is configured locally, never supplied by the phone in a command.
+
+```powershell
+.\.venv\Scripts\python.exe -m execution.device_server pair --host 192.168.1.10 --port 8765
+```
+
+Read `runtime/device_receiver/pairing.json` only in a trusted local editor. Transfer
+its secret, public peer ID and certificate pin directly to your phone over a trusted
+out-of-band channel (for example, manually enter them while viewing the local
+file). Do not email/upload them, use cloud-synchronized clipboards, paste them into
+chat, or copy them to shared storage. Compare the pin with the Windows pairing
+output. The secret is 64 hex characters, not a short PIN.
+
+Start the listener deliberately. Without LAN options it binds only `127.0.0.1`:
+
+```powershell
+.\.venv\Scripts\python.exe -m execution.device_server serve --encrypted-key
+# Physical-phone test, only after local review and deliberate LAN configuration:
+.\.venv\Scripts\python.exe -m execution.device_server serve --encrypted-key --bind 192.168.1.10 --port 8765 --allow-lan
+```
+
+Use one serve command at a time; Ctrl+C stops it. Public addresses, DNS names and
+wildcard binds are rejected. Use a trusted private LAN, never router port forwarding
+or a tunnel. Address checks cannot detect a router forwarding an Internet connection.
+No firewall rule is changed automatically; any necessary rule must be deliberately
+limited by the user to the private network and intended phone. The Windows session
+must support the existing Calculator observation adapter.
+
+Revoke locally, including while the server is running:
+
+```powershell
+.\.venv\Scripts\python.exe -m execution.device_server revoke
+```
+
+Revocation persists across restart. It does not remove replay history, reset
+pairing, or undo actions already executing. Stop the listener too when finished.
+
+### Manual Vivo Y300 setup (not physically tested)
+
+Install Termux from an official channel following the
+[Termux installation instructions](https://github.com/termux/termux-app#installation),
+and install its Python package yourself (`pkg install python`) if needed. These
+are manual prerequisites, not dependencies installed by this change. Copy only
+`execution/device_client.py` and `execution/device_storage.py` into a directory
+inside Termux's private home; the client does not need the repository, cloud models,
+Android Accessibility, screen capture, storage permissions or an Android Studio build.
+
+```sh
+python device_client.py pair
+python device_client.py open-calculator
+```
+
+Pairing prompts for the locally chosen Windows address/port, peer ID, certificate
+pin and secret (hidden entry). Credentials are saved only in private app storage.
+The Calculator command persists its exact request before connecting and prints
+only the authenticated, sanitized receipt. Look for `status: completed` and
+`verified: true`; do not infer success from connection establishment.
+
+This intentionally small client retains **one demonstration request**. Repeating
+`open-calculator` explicitly resends that same request, with a new exchange nonce;
+it never silently creates another task after an uncertain result. Its two-minute
+expiry is retained. After expiry, the server rejects it. There is no general task
+queue, automatic retry, pending-file reset, credential rotation or safe journal
+pruning interface. Do not delete state to work around an uncertain outcome or full
+journal; reconciliation and generation rotation need a separate reviewed change.
+
+### Validation and remaining limits
+
+Automated TLS tests use newly generated disposable certificates and keys from the
+already installed OpenSSL, ephemeral loopback ports and mocked Windows operations.
+No production listener, credential, firewall rule, device pairing or Calculator
+window was created. Physical Android connectivity and the real phone-to-Windows
+workflow remain unverified until the manual procedure succeeds.
+
+TLS pins require manual certificate lifecycle management; this pin-only client
+does not implement PKI expiry/revocation checks. Revoke a compromised pairing
+immediately. SQLite cannot provide exactly-once external effects or detect restored
+old backups. The capacity limit remains 128 requests, with no eviction. A local
+administrator, compromised trusted process, stolen pairing secret or rooted phone
+can defeat the corresponding trust boundary. A malicious network peer can consume
+the bounded worker's timeout and cause denial of service; this is not an Internet
+server or production availability design. Untrusted skills remain disabled.
+
+MVP checks actually executed on 2026-10-18:
+
+- `python -m execution.test_device_protocol`: 37 passed.
+- `python -m execution.regression_suite`: passed once after implementation;
+  224 execution cases across the 21 registered modules, plus six validator cases.
+- `python -m brain.validator`: 6/6; `python -m knowledge.test_source_security`: 15/15.
+  These cases overlap the full suite, not additional unique coverage.
+- `python -m compileall -q main.py brain execution desktop knowledge tools agents skills providers`:
+  exit 0. All Python commands used `.\.venv\Scripts\python.exe`.
+- `git diff --check`: passed. Source pattern scan found no credential/key literals
+  or personal home paths in changed files; runtime credential/journal paths are ignored.
+
+There were no automated test failures or skips. The final existing-directory reset
+guard was exercised by the full suite after its addition. Actual Win32 private-ACL
+creation/read checks passed on disposable fixtures. No production listener or
+physical phone was used. No dependencies were installed, no lifecycle or finalizer
+allowlist was changed, and no commit, push, merge or finalizer was run.
 
 ## Kotlin companion architecture (design only)
 
@@ -143,7 +405,7 @@ capture, broad storage, personal browser integration or banking interaction belo
 in the default manifest. No APK, Kotlin build, permission request or phone installation
 was performed in this milestone.
 
-## Security exit and remaining limitations
+## Historical Day 16 security exit and remaining limitations
 
 Skill execution, testing, direct worker imports and name-based capability invocation
 now deny before candidate IO/process launch. A real subprocess test uses a malicious
@@ -176,7 +438,7 @@ are not added to the finalizer's exact documentation allowlist. Human review/app
 integration should precede a normal next-day lifecycle transition; do not edit
 canonical lifecycle records or weaken blocked-path checks to force finalization.
 
-## Verification and review inventory
+## Historical Day 16 verification and review inventory
 
 Final automated results: **189 passing execution cases across 21 modules**, with
 **0 final failures and 0 skips**. This comprises 186 named test functions plus the
@@ -309,7 +571,7 @@ knowledge/public_context_schema.py
 knowledge/test_source_security.py
 ```
 
-## Day 16 post-merge release review — 2026-10-17
+## Historical Day 16 post-merge release review — 2026-10-17
 
 The Day 16 implementation and reviewed security corrections were
 integrated into main through pull request #1 (merge commit 5df3079).
