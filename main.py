@@ -340,4 +340,8 @@ def run_agent():
 
 
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:2] == ["--voice"]:
+        from voice.cli import main as voice_main
+        raise SystemExit(voice_main(sys.argv[2:] or ["listen"]))
     run_agent()

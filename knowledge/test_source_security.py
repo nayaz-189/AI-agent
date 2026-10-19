@@ -68,6 +68,44 @@ def test_indexing_never_executes_code_or_exports_default_literals():
         assert PRIVATE not in json.dumps(record)
 
 
+def test_voice_source_root_is_flat_and_excludes_models_recordings_and_worktrees():
+    with fixture_root() as root:
+        expected = {"voice/__init__.py", "voice/dialogue.py", "voice/models.py"}
+        for relative in expected:
+            put(root, relative)
+        excluded = (
+            "voice/models/private.py", "voice/identity/private.py", "voice/runtime/private.py",
+            "voice/worktree/private.py", "voice/.codex/private.py", "voice/__pycache__/private.py",
+            "runtime/voice/models/private.py", "runtime/voice/identity/private.py",
+            "runtime/voice/recordings/private.py", ".worktrees/day18/voice/private.py",
+            "worktrees/day18/voice/private.py", "unknown_worktree/voice/private.py",
+        )
+        for relative in excluded:
+            put(root, relative, PRIVATE)
+        put(root, "voice/owner.wav", PRIVATE)
+        put(root, "voice/embedding.npy", PRIVATE)
+        with patch.object(indexer, "PROJECT_ROOT", root):
+            discovered = {indexer.relative_path(path) for path in indexer.discover_python_files()}
+            assert discovered == expected
+            for relative in excluded:
+                assert not indexer.source_path_allowed(relative)
+            result = indexer.build_source_index()
+        assert result["statistics"]["parse_failures"] == 0
+        assert PRIVATE not in json.dumps(result)
+
+
+def test_voice_source_directory_cannot_redirect_to_local_model_cache():
+    with fixture_root() as root:
+        target = put(root, "runtime/voice/models/private.py", PRIVATE).parent
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(root / "voice"))
+        else:
+            (root / "voice").symlink_to(target, target_is_directory=True)
+        with patch.object(indexer, "PROJECT_ROOT", root):
+            assert indexer.discover_python_files() == []
+
+
 def test_real_hardlinked_source_is_not_read():
     with fixture_root() as root:
         target = put(root, "runtime/private.py", PRIVATE)

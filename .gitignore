@@ -84,3 +84,14 @@ knowledge/exports/
 # Runtime-generated artifacts
 # -------------------------
 runtime/
+
+# Voice recordings, biometric arrays and downloaded model weights
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.onnx
+*.ckpt
+*.npy
+*.npz
+/voice/models/

@@ -18,6 +18,8 @@ TEST_MODULES = (
     "test_security_review", "test_source_security", "test_task_conditions",
     "test_task_execution_history", "test_task_executor", "test_skill_isolation",
     "test_finalization_gate", "test_orchestrator", "test_device_protocol",
+    "test_voice_audio", "test_voice_dialogue", "test_voice_identity",
+    "test_voice_runtime", "test_voice_storage",
 )
 
 

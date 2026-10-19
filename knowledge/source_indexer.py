@@ -65,7 +65,7 @@ IGNORED_DIRECTORIES = {
 }
 
 # Project-owned roots only; never discover arbitrary top-level worktrees.
-SOURCE_ROOTS = {"agents", "brain", "desktop", "execution", "knowledge", "tools", "providers", "skills"}
+SOURCE_ROOTS = {"agents", "brain", "desktop", "execution", "knowledge", "tools", "providers", "skills", "voice"}
 ROOT_FILES = {"main.py", "dev.py", "benchmark_models.py", "initialize_project_state.py",
               "publish_context.py", "refresh_knowledge.py", "start_day_10.py",
               "test_app_launch.py", "test_apps.py", "test_canonical_recorder.py", "test_context_builder.py",
