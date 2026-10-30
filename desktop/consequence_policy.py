@@ -213,11 +213,15 @@ class ConsequencePolicy:
                 rule_id="registered-application-launch",
             )
         if action == "launch_application":
+            # Explicit owner standing policy: permit ONLY discovered, unblocked apps.
+            # Unknown/blocked identities cannot be authorized by model instructions.
+            from vorak_integrated.trust_policy import trusted_launch
+            safe = trusted_launch(arguments)
             return make_policy_result(
-                PolicyDecision.CONFIRM,
-                reason="Discovery is not authorization; shortcuts can contain commands.",
-                consequence="general application launch",
-                rule_id="application-launch-confirmation",
+                PolicyDecision.ALLOW if safe else PolicyDecision.DENY,
+                reason="Locally discovered allowed app." if safe else "Protected or undiscovered application blocked.",
+                consequence="application launch",
+                rule_id="owner-standing-safe-app-launch" if safe else "owner-blocked-application",
             )
 
         if not isinstance(target, dict):

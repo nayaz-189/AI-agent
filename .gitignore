@@ -1,91 +1,44 @@
-# -------------------------
-# Python
-# -------------------------
-
+vorak_parakeet/models/
+vorak_parakeet/downloads/
 __pycache__/
+*.pyc
+
+# Restored privacy exclusions; existing local rules retained.
 *.py[cod]
 *.pyo
-
-# Virtual environment
 .venv/
 venv/
 env/
-
-# -------------------------
-# Secrets
-# -------------------------
-
 .env
 .env.*
 *.key
 *.pem
 secrets/
 credentials/
-
-# -------------------------
-# IDE / OS
-# -------------------------
-
 .vscode/
 .idea/
-
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# -------------------------
-# Temporary files
-# -------------------------
-
 *.tmp
 *.temp
 *.log
-
-# -------------------------
-# Python tooling
-# -------------------------
-
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
-# -------------------------
-# Knowledge system - LOCAL / INTERNAL
-# -------------------------
-
-# Runtime historical/current state
 knowledge/store/events.jsonl
 knowledge/store/project_state.json
-
-# Generated internal AI knowledge artifacts
 knowledge/store/ai_context.json
 knowledge/store/source_index.json
 knowledge/store/knowledge_export.json
 knowledge/store/project_context.json
-
-# Canonical knowledge database
 knowledge/database/
 *.db
 *.db-shm
 *.db-wal
-
-# Full internal knowledge bridge
 knowledge/bridge/
-
-# -------------------------
-# External safe AI context
-# -------------------------
-
-# Sanitized publication artifacts are generated locally.
-# They are verified and copied into the separate
-# AI-agent-context repository for external AI access.
 knowledge/exports/
-# -------------------------
-# Runtime-generated artifacts
-# -------------------------
 runtime/
-
-# Voice recordings, biometric arrays and downloaded model weights
 *.wav
 *.flac
 *.mp3
@@ -95,3 +48,6 @@ runtime/
 *.npy
 *.npz
 /voice/models/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

@@ -218,6 +218,10 @@ def build_application_index():
 
     for app in applications:
 
+        from vorak_integrated.trust_policy import safe_app
+        if not safe_app(app):
+            continue
+
         normalized_name = app[
             "normalized_name"
         ]

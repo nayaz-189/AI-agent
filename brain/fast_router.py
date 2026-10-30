@@ -11,6 +11,11 @@ def clean_command(command):
 
 
 def fast_route(command):
+    # VORAK_FAST_APPS_INTEGRATION_V1
+    from vorak_extensions.fast_apps import fast_app_plan
+    quick = fast_app_plan(command)
+    if quick is not None:
+        return quick
     command = clean_command(command)
 
     if command.rstrip(".") == "research python ast and pathlib, summarize the findings, and save an approved report":
