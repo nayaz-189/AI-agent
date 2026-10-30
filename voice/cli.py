@@ -138,6 +138,40 @@ def _enroll_or_calibrate(command):
         print("Experimental calibration completed. This small sample is not proof of liveness or anti-spoofing.")
 
 
+def _upgrade_owner():
+    """15 fresh distinct owner recordings. V2 is not trusted until recalibrated."""
+    _interactive()
+    _headroom()
+    from voice.models import verify_model_assets
+    from voice.runtime import obtain_confirmation
+    from voice.owner_upgrade import OwnerUpgradeSession, PROMPTS
+    verify_model_assets("ecapa")
+    runtime = _runtime()
+    runtime.verifier.warmup()
+    session = OwnerUpgradeSession(runtime.verifier)
+    print("Upgrade existing owner with 15 new styles; original files stay untouched.")
+    print("Each sample is processed immediately; audio is never saved.")
+    for index, (style, phrase) in enumerate(PROMPTS, 1):
+        while True:
+            clip = _record(runtime.audio, runtime.settings,
+                           f"Recording {index}/15 [{style}] - Say: {phrase}", seconds=6)
+            try:
+                seconds = session.add(clip)
+                print(f"Accepted sample {index}/15; estimated active audio: {seconds:.1f}s")
+                break
+            except ValueError as error:
+                print(str(error))
+            finally:
+                del clip
+    request = session.proposal()
+    print("All 15 styles collected. A local permission dialog must approve the new profile.")
+    token = obtain_confirmation(runtime.authority, request)
+    session.commit(authority=runtime.authority, confirmation_token=token)
+    print("Owner profile v2 created. The original enrollment and calibration are unchanged.")
+    print("Voice verification is now fail-closed until v2 calibration is completed.")
+    print(r"Next: .\.venv\Scripts\python.exe -m voice.cli calibrate")
+
+
 def _listen(once=False):
     _interactive()
     _headroom()
@@ -172,7 +206,7 @@ def _listen(once=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="VORAK local owner-verified voice interface")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("devices", "status", "models", "enroll", "calibrate", "verify", "microphone-test"):
+    for name in ("devices", "status", "models", "enroll", "calibrate", "verify", "microphone-test", "upgrade-owner"):
         commands.add_parser(name)
     listen = commands.add_parser("listen")
     listen.add_argument("--once", action="store_true")
@@ -208,12 +242,17 @@ def main(argv=None):
             print(json.dumps({"packages": packages, "available_memory_mb": available_memory_mb(),
                               "models_present": {kind: all((MODEL_ROOT / a[0]).is_file() for a in assets) for kind, assets in ASSETS.items()},
                               "owner_enrolled": (VOICE_ROOT / "identity" / "enrollment.json").is_file(),
-                              "calibration_present": (VOICE_ROOT / "identity" / "calibration.json").is_file(),
+                              "calibration_present": (VOICE_ROOT / "identity" /
+                              ("calibration-v2.json" if (VOICE_ROOT / "identity" / "enrollment-v2.json").exists()
+                               else "calibration.json")).is_file(),
+                              "owner_profile_version": (2 if (VOICE_ROOT / "identity" / "enrollment-v2.json").exists() else 1),
                               "voice_actions_ready": VOICE_ACTIONS_READY is True,
                               "input_mode": "explicit_push_to_talk", "anti_spoofing": "not_proven"}, indent=2))
         elif args.command == "models":
             from voice.models import prepare_models
             prepare_models(progress=lambda kind, name: print("Verified public model asset:", name, flush=True))
+        elif args.command == "upgrade-owner":
+            _upgrade_owner()
         elif args.command in {"enroll", "calibrate"}:
             _enroll_or_calibrate(args.command)
         elif args.command == "listen":

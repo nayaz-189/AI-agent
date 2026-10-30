@@ -16,7 +16,8 @@ from desktop.user_confirmation import UserConfirmationBoundary
 from execution.execution_history import ExecutionHistory
 from voice.audio import AudioIO, VoiceAudioError, validate_audio
 from voice.dialogue import DialogueSession, IntentKind, classify_intent, parse_wake
-from voice.identity import SpeakerVerifier, SpeakerOutcome, Verification
+from voice.identity import SpeakerOutcome, Verification
+from voice.owner_upgrade import UpgradedSpeakerVerifier as SpeakerVerifier
 from voice.settings import MODEL_ROOT, VOICE_ROOT, SettingsStore
 from voice.speech import SpeechRecognizer, SpeechOutput, Transcription
 
@@ -33,6 +34,7 @@ def confirm_voice_request(request):
         return False
     actions = {"voice_open_calculator": "Open Windows Calculator after this voice request",
                "enroll_voice_owner": "Create the first experimental local owner voice profile",
+               "upgrade_voice_owner": "Create an additional 15-sample owner profile, keeping the original untouched",
                "calibrate_voice_owner": "Calibrate the owner profile with owner and consenting non-owner samples"}
     if request.get("action") not in actions:
         return False
