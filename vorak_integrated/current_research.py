@@ -186,9 +186,16 @@ def _general_search(query):
 
 def lookup(kind, query="", location="Bengaluru", hours=24):
     """Model-invoked read-only tool. Returns small JSON-compatible result; no secrets."""
-    if kind not in ("weather", "news", "search"):
+    if kind not in ("weather", "news", "search", "time"):
         return {"status": "invalid", "message": "Unknown research type"}
     try:
+        if kind == "time":
+            # Fixed-offset Indian Standard Time for VORAK's Bengaluru deployment.
+            ist = timezone(timedelta(hours=5, minutes=30), name="IST")
+            now = datetime.now(ist)
+            return {"status": "ok", "type": "local_time", "timezone": "Asia/Kolkata",
+                    "local_datetime": now.isoformat(), "formatted": now.strftime("%I:%M %p"),
+                    "source": "local system clock"}
         if kind == "weather":
             return _weather(location)
         if kind == "news":
