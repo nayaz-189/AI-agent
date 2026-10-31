@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import os
 import queue
+import sys
 import threading
 from vorak_integrated.stability import owner_confirmation, bounded_daemon_call, AudioSink, run_interruptibly, SHUTDOWN
 from vorak_integrated.voice_guard import AudioGuard, TranscriptGuard  # VORAK_AUDIO_TURNGUARD_V5
