@@ -46,3 +46,10 @@ TIMING AND SCOPE
 - This section is a future implementation checklist only; DO NOT install or launch new orchestration agents today.
 - Complete voice reliability/security, app-action verification, and current small-tool regressions first.
 - Preserve the known-working Gemini Live checkpoint and use separate feature branches, tests and rollback for new features.
+
+NOVEMBER CONVERSATION CONTROL EXPERIMENT — NOT YET VALIDATED ON WINDOWS
+- Speech-only STOP: discard audible response and remain silent for a new utterance; NEVER cancel running desktop/research work.
+- PAUSE/WAIT 10/20/30 seconds: temporary listening window, best-effort combined follow-up response when time expires; explicit CONTINUE resumes earlier. No guarantee that separately detected Live speech turns merge correctly.
+- While audio is playing, spoken interruption requires opt-in headset barge-in; default laptop-speaker mode intentionally mutes mic to prevent echo/false activations.
+- Future concurrent task STOP/PAUSE/RESUME by task ID is deferred to the multi-agent orchestrator and requires separate cancellation/permission semantics.
+- Regression and Windows microphone tests are mandatory before merging.
