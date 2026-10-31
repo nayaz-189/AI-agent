@@ -32,6 +32,26 @@ class ExpertResearchTests(TestCase):
         self.assertEqual(result["status"], "invalid_query")
         net.assert_not_called()
 
+    def test_live_request_uses_official_endpoint_and_selected_preset(self):
+        body = json.dumps({"output": [{"content": [{
+            "type": "output_text", "text": "Verified research summary",
+            "annotations": [{"url": "https://example.org/study", "title": "Study"}]
+        }]}]}).encode("utf-8")
+        response = mock.MagicMock()
+        response.__enter__.return_value.status = 200
+        response.__enter__.return_value.geturl.return_value = expert_research.ENDPOINT
+        response.__enter__.return_value.read.return_value = body
+        with mock.patch.dict("os.environ", {
+                "VORAK_EXPERT_RESEARCH": "1", "PERPLEXITY_API_KEY": "test-key"}):
+            with mock.patch.object(expert_research, "urlopen", return_value=response) as net:
+                result = expert_research.research(
+                    "Study whether AI-assisted teaching improves learning outcomes.", "deep")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["sources"]), 1)
+        request = net.call_args.args[0]
+        self.assertEqual(request.full_url, expert_research.ENDPOINT)
+        self.assertEqual(json.loads(request.data)["preset"], "high")
+
     def test_only_source_urls_from_provider(self):
         payload = {"output": [
             {"type": "message", "content": [
