@@ -82,6 +82,18 @@ class BrowserTests(TestCase):
         r=browser.execute(page,'inspect')
         self.assertEqual(r['status'],'blocked')
 
+    def test_plain_i_am_not_a_robot_text_detected(self):
+        page=FakePage(url='https://www.google.com/search?q=MrBeast',
+                      body='Please verify: I am not a robot')
+        self.assertEqual(browser.execute(page,'inspect')['status'],
+                         'verification_required')
+
+    def test_robot_checkbox_is_not_automated_even_if_page_detection_misses(self):
+        page=FakePage(url='https://www.google.com/search?q=MrBeast',
+                      body='Ordinary results')
+        r=browser.execute(page,'click',role='checkbox',name="I'm not a robot")
+        self.assertEqual(r['status'],'blocked')
+
     def test_challenge_detection_without_credential_read(self):
         page=FakePage(url='https://www.google.com/sorry/index',body='Robot challenge')
         self.assertTrue(browser.human_verification(page))
@@ -105,6 +117,17 @@ class CacheTests(TestCase):
                 second=resolver.get_application_index()
                 self.assertEqual(second,apps)
                 build.assert_called_once()
+
+
+class WebsiteDuplicateTests(TestCase):
+    def test_same_url_does_not_open_duplicate_chrome_tab(self):
+        with mock.patch.object(actions,'chrome_open',return_value=True) as opener:
+            with mock.patch.dict(actions._RECENT_URL_OPEN,{},clear=True):
+                first=actions.open_target('google')
+                second=actions.open_target('google')
+        self.assertEqual(first['status'],'opened')
+        self.assertEqual(second['status'],'already_requested')
+        opener.assert_called_once()
 
 
 class LaunchTests(TestCase):
