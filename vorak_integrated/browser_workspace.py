@@ -12,7 +12,8 @@ from urllib.parse import urlsplit
 BLOCKED_UI = re.compile(r'(?i)\b(?:password|otp|2fa|checkout|billing|payment|pay now|purchase|place order|bank|transfer|login|log in|sign in|credit card|debit card)\b')
 BLOCKED_ACTION = re.compile(r'(?i)\b(?:send|submit|publish|post|share|upload|delete|remove|invite|buy|purchase|pay|checkout|login|log in|sign in|password|otp|transfer|bank)\b')
 HIGH_RISK_VISIBLE = re.compile(r'(?i)\b(?:payment details|enter your password|card number|confirm purchase|complete payment|enter otp|enter your pin)\b')
-PUBLIC_ACTIONS = {'open','inspect','click','fill'}
+PUBLIC_ACTIONS = {'open','inspect','click','fill','resume'}
+HUMAN_CHECK = re.compile(r"(?i)(?:i['’]?m not a robot|are you a robot|verify (?:that )?you(?:'re| are) human|verify you are not a robot|unusual traffic|checking your browser|complete the captcha|security challenge|just a moment\\.\\.\\.|prove you are human)")
 
 
 def safe_url(url):
@@ -50,6 +51,31 @@ def _protected_page(page):
     except Exception:return True
 
 
+def human_verification(page):
+    """Detect visible anti-bot challenges; NEVER interact with challenge controls."""
+    try:
+        location=urlsplit(page.url)
+        path=(location.path or '').casefold()
+        if location.hostname and location.hostname.endswith('google.com') and path.startswith('/sorry/'):
+            return True
+        heading=(page.title() or '')[:180]
+        if HUMAN_CHECK.search(heading):
+            return True
+        body=page.locator('body').inner_text(timeout=1200)[:2200]
+        return bool(HUMAN_CHECK.search(body))
+    except Exception:
+        # Detection failure must not be confused with a completed verification.
+        return False
+
+
+def _verification_handoff(page):
+    return {'status':'verification_required',
+            'url':page.url,
+            'message':('Human verification is required. I will keep this browser page open. '
+                       'Please complete the check yourself, then tell me to continue. '
+                       'I cannot automatically solve or bypass it.')}
+
+
 def execute(page, action, *, url='',role='',name='',text=''):
     """Perform a single verified step; tests can inject a fake Playwright page."""
     if action not in PUBLIC_ACTIONS:return {'status':'blocked','message':'Unknown browser action.'}
@@ -58,13 +84,22 @@ def execute(page, action, *, url='',role='',name='',text=''):
     if action=='open':
         if not safe_url(url):return {'status':'blocked','message':'Unsafe or protected website URL.'}
         try:
-            page.goto(url,wait_until='domcontentloaded',timeout=15000)
+            # Same URL should not trigger another navigation or new browser window.
+            already_open=page.url.rstrip('/')==url.rstrip('/')
+            if not already_open:
+                page.goto(url,wait_until='domcontentloaded',timeout=15000)
             if _protected_page(page):
                 page.goto('about:blank')
                 return {'status':'blocked','message':'Destination resolved to a protected page; content withheld.'}
-            return {'status':'opened','url':page.url,'title':page.title()[:120]}
+            if human_verification(page):return _verification_handoff(page)
+            return {'status':'already_open' if already_open else 'opened',
+                    'url':page.url,'title':page.title()[:120]}
         except Exception as exc:return {'status':'failed','message':'Navigation failed: '+type(exc).__name__}
     if _protected_page(page):return {'status':'blocked','message':'Protected browser page; no inspection or action.'}
+    if human_verification(page):return _verification_handoff(page)
+    if action=='resume':
+        return {'status':'ready','url':page.url,'title':page.title()[:120],
+                'message':'The challenge is no longer detected. Inspect the page before continuing the task.'}
     if action=='inspect':
         try:
             raw=page.locator('body').inner_text(timeout=3500)
@@ -92,6 +127,7 @@ def execute(page, action, *, url='',role='',name='',text=''):
         if _protected_page(page):
             page.goto('about:blank')
             return {'status':'blocked','message':'Action led to a protected page; workspace cleared.'}
+        if human_verification(page):return _verification_handoff(page)
         return {'status':'attempted_unverified','message':'Clicked control; check page state with inspect.',
                 'url':page.url}
     except Exception as exc:return {'status':'failed','message':'Browser control failed: '+type(exc).__name__}
@@ -102,6 +138,7 @@ class BrowserWorker:
         self._jobs=queue.Queue(maxsize=10)
         self._thread=None
         self._lock=threading.Lock()
+        self._human_waiting=False
 
     def _loop(self):
         try:
@@ -118,7 +155,19 @@ class BrowserWorker:
                         if args is None:
                             result.put({'status':'closed'})
                             break
-                        try: result.put(execute(page,**args),timeout=1)
+                        try:
+                            if args.get('action')=='resume' and not self._human_waiting:
+                                answer={'status':'not_ready','message':'No verification handoff is pending.'}
+                            else:
+                                answer=execute(page,**args)
+                            if answer.get('status')=='verification_required':
+                                self._human_waiting=True
+                            elif args.get('action')=='resume' and answer.get('status')=='ready':
+                                self._human_waiting=False
+                                answer['status']='verification_cleared'
+                            elif args.get('action')=='open' and answer.get('status') in {'opened','already_open'}:
+                                self._human_waiting=False
+                            result.put(answer,timeout=1)
                         except Exception as exc:result.put({'status':'failed','message':type(exc).__name__})
                 finally:
                     context.close();browser.close()
