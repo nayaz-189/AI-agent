@@ -76,6 +76,15 @@ class BrowserTests(TestCase):
                          'verification_required')
         self.assertEqual(page.goto_count,0)
 
+    def test_challenge_offers_read_only_source_fallback_not_bypass(self):
+        page=FakePage(url='https://www.google.com/sorry/index',
+                      body="I'm not a robot")
+        result=browser.execute(page,'inspect')
+        self.assertEqual(result['status'],'verification_required')
+        self.assertTrue(result['requires_user_verification_for_this_page'])
+        self.assertIn('current_information',result['research_alternative'])
+        self.assertEqual(page.goto_count,0)
+
     def test_protected_pages_remain_blocked(self):
         self.assertFalse(browser.safe_url('https://www.google.com/login'))
         page=FakePage(url='https://www.google.com/login')
@@ -166,3 +175,5 @@ class LiveContractTests(TestCase):
         self.assertIn("'fill', 'resume'", text)
         self.assertIn('async with client.aio.live.connect',text)
         self.assertIn('Never solve CAPTCHAs automatically',text)
+        self.assertIn('SEARCH ROUTING:',text)
+        self.assertIn('current_information with kind search',text)
