@@ -2,6 +2,8 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
 
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -27,6 +29,45 @@ START_MENU_LOCATIONS = [
 
 
 _APPLICATION_INDEX = None
+_INDEX_LOCK = threading.RLock()
+_INDEX_CACHE = Path(os.environ.get('LOCALAPPDATA') or (Path.home()/'.cache')) / 'VORAK' / 'app_index_v1.json'
+_INDEX_CACHE_TTL = 6 * 60 * 60
+
+
+def _load_cached_index():
+    try:
+        if os.environ.get('VORAK_NO_APP_CACHE') == '1':
+            return None
+        if not _INDEX_CACHE.is_file() or time.time()-_INDEX_CACHE.stat().st_mtime > _INDEX_CACHE_TTL:
+            return None
+        if _INDEX_CACHE.stat().st_size > 2_000_000:
+            return None
+        data = json.loads(_INDEX_CACHE.read_text(encoding='utf-8'))
+        if not isinstance(data,dict) or not 1 <= len(data) <= 2000:
+            return None
+        from vorak_integrated.trust_policy import safe_app
+        for name,app in data.items():
+            if not isinstance(name,str) or not isinstance(app,dict):
+                return None
+            if normalize_name(app.get('name','')) != name or not safe_app(app):
+                return None
+            if app.get('launch_type')=='shortcut' and not Path(app['launch_target']).is_file():
+                return None
+        return data
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _save_cached_index(data):
+    if os.environ.get('VORAK_NO_APP_CACHE')=='1':
+        return
+    try:
+        _INDEX_CACHE.parent.mkdir(parents=True,exist_ok=True)
+        temp=_INDEX_CACHE.with_suffix('.tmp')
+        temp.write_text(json.dumps(data),encoding='utf-8')
+        temp.replace(_INDEX_CACHE)
+    except OSError:
+        pass
 
 
 def normalize_name(name):
@@ -253,34 +294,31 @@ def build_application_index():
 
 def get_application_index():
     global _APPLICATION_INDEX
-
-    if _APPLICATION_INDEX is None:
-
-        print(
-            "Building application index..."
-        )
-
-        _APPLICATION_INDEX = (
-            build_application_index()
-        )
-
-        print(
-            f"Application index ready: "
-            f"{len(_APPLICATION_INDEX)} apps"
-        )
-
+    if _APPLICATION_INDEX is not None:
+        return _APPLICATION_INDEX
+    with _INDEX_LOCK:
+        if _APPLICATION_INDEX is None:
+            cached=_load_cached_index()
+            if cached is not None:
+                _APPLICATION_INDEX=cached
+                print(f'Application index reused: {len(cached)} apps', flush=True)
+            else:
+                print('Building application index...',flush=True)
+                _APPLICATION_INDEX=build_application_index()
+                _save_cached_index(_APPLICATION_INDEX)
+                print(f'Application index ready: {len(_APPLICATION_INDEX)} apps',flush=True)
     return _APPLICATION_INDEX
 
 
 def refresh_application_index():
-    """
-    Force application discovery to run again.
-    """
-
+    """Refresh installed apps without using a stale disk index."""
     global _APPLICATION_INDEX
-
-    _APPLICATION_INDEX = None
-
+    with _INDEX_LOCK:
+        _APPLICATION_INDEX=None
+        try:
+            _INDEX_CACHE.unlink(missing_ok=True)
+        except OSError:
+            pass
     return get_application_index()
 
 
