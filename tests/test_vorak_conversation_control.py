@@ -6,7 +6,7 @@ Does not open a microphone or connect to Gemini.
 from pathlib import Path
 from unittest import TestCase
 
-from vorak_integrated.conversation_control import ConversationGate, is_stop_utterance
+from vorak_integrated.conversation_control import ConversationGate, is_stop_utterance, parse_pause_utterance
 
 
 class SpeechGateTests(TestCase):
@@ -73,6 +73,54 @@ class SpeechGateTests(TestCase):
     def test_speech_stop_does_not_reference_task_cancellation(self):
         result=ConversationGate().stop()
         self.assertIn('No task was cancelled',result['message'])
+
+
+class PauseIntentTests(TestCase):
+    def test_natural_pause_commands_and_spoken_numbers(self):
+        samples = {
+            'V, pause for 10 seconds.': 10,
+            'Vorak, wait for twenty seconds.': 20,
+            'Give me 30 seconds to think.': 30,
+            'Hey V, please wait for ten seconds': 10,
+            'V, hold on for thirty seconds': 30,
+        }
+        for phrase, expected in samples.items():
+            self.assertEqual(parse_pause_utterance(phrase), expected, phrase)
+
+    def test_regular_questions_must_not_pause(self):
+        for phrase in (
+            'What can happen in 30 seconds?',
+            'Explain what waiting 10 seconds means.',
+            'Stop my coding task.',
+            'Give me a 30 second speech.',
+            '',
+        ):
+            self.assertIsNone(parse_pause_utterance(phrase), phrase)
+
+
+class LocalAudioSafetyTests(TestCase):
+    def test_emergency_hotkey_does_not_kill_work(self):
+        source = (Path(__file__).resolve().parents[1] /
+                  'vorak_integrated' / 'live.py').read_text(encoding='utf-8')
+        self.assertIn('async def local_emergency_hotkey():', source)
+        self.assertIn("0x11,0x12,0x53", source)
+        self.assertIn("gate.stop()", source)
+        self.assertIn("await interrupt_draining()", source)
+        self.assertNotIn("cancel_task_by_id", source)
+
+    def test_server_interrupt_handled_before_model_audio(self):
+        source = (Path(__file__).resolve().parents[1] /
+                  'vorak_integrated' / 'live.py').read_text(encoding='utf-8')
+        block = source[source.index("content=msg.server_content"):]
+        self.assertLess(block.index("if getattr(content,'interrupted',False)"),
+                        block.index("if content.model_turn:"))
+
+    def test_local_pause_does_not_cancel_its_timer_when_model_repeats_command(self):
+        source = (Path(__file__).resolve().parents[1] /
+                  'vorak_integrated' / 'live.py').read_text(encoding='utf-8')
+        self.assertIn("action=='pause' and gate.mode!='holding'", source)
+        self.assertIn("seconds=parse_pause_utterance(heard)", source)
+        self.assertIn("resume_after_hold(gate.generation,seconds)", source)
 
 
 class GeminiSchemaTests(TestCase):
