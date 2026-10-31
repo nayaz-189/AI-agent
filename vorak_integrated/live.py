@@ -433,6 +433,12 @@ async def run_session(client,profile,args):
                             microphone_enabled.set()
                         content=msg.server_content
                         if content is None:continue
+                        # Process interruption before model audio so no cancelled
+                        # speech chunk can be queued from the same server event.
+                        if getattr(content,'interrupted',False):
+                            await interrupt_draining()
+                            await finish_spoken_answer(interrupted=True)
+                            emit_turn()
                         if content.input_transcription and content.input_transcription.text:
                             # Ignore unsupported noise transcripts and close textual
                             # copies of our own recent playback. Only Gemini's
@@ -484,11 +490,6 @@ async def run_session(client,profile,args):
                                         output.start()
                                         guard.set_playback(True)
                                     output.write(bytes(blob.data))
-                        if getattr(content,'interrupted',False):
-                            # A newly detected user turn must discard any queued answer.
-                            await interrupt_draining()
-                            await finish_spoken_answer(interrupted=True)
-                            emit_turn()
                         if content.turn_complete:
                             emit_turn()
                             if barge_in:
