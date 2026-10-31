@@ -10,7 +10,7 @@ import threading
 from urllib.parse import urlsplit
 
 BLOCKED_UI = re.compile(r'(?i)\b(?:password|otp|2fa|checkout|billing|payment|pay now|purchase|place order|bank|transfer|login|log in|sign in|credit card|debit card)\b')
-BLOCKED_ACTION = re.compile(r'(?i)\b(?:send|submit|publish|post|share|upload|delete|remove|invite|buy|purchase|pay|checkout|login|log in|sign in|password|otp|transfer|bank)\b')
+BLOCKED_ACTION = re.compile(r'(?i)\b(?:send|submit|publish|post|share|upload|delete|remove|invite|buy|purchase|pay|checkout|login|log in|sign in|password|otp|transfer|bank|robot|captcha|recaptcha|hcaptcha)\b')
 HIGH_RISK_VISIBLE = re.compile(r'(?i)\b(?:payment details|enter your password|card number|confirm purchase|complete payment|enter otp|enter your pin)\b')
 PUBLIC_ACTIONS = {'open','inspect','click','fill','resume'}
 HUMAN_CHECK = re.compile(r"(?i)(?:i['’]?m not a robot|are you a robot|verify (?:that )?you(?:'re| are) human|verify you are not a robot|unusual traffic|checking your browser|complete the captcha|security challenge|just a moment|prove you are human)")
