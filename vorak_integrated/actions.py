@@ -14,6 +14,8 @@ from html.parser import HTMLParser
 
 _RECENT_APP_DISPATCH = {}
 _RECENT_APP_LOCK = threading.Lock()
+_RECENT_URL_OPEN = {}
+_RECENT_URL_LOCK = threading.Lock()
 _APP_DISPATCH_COOLDOWN = 20.0  # avoid repeated launches during one voice task
 
 KNOWN = {'google':'https://www.google.com','youtube':'https://www.youtube.com',
@@ -173,7 +175,21 @@ def open_target(name, confirm=None, resolver=None, choose=None, search=None, bro
     link=items[0][1] if len(items)==1 else choose_sites(items,name,select=choose)
     if not link:return {'status':'cancelled','message':'Website selection cancelled.'}
     opener=browser or chrome_open
-    worked=opener(link)
+    if browser is None:
+        # Chrome tab opening must be idempotent across repeat voice tool calls.
+        with _RECENT_URL_LOCK:
+            now=time.monotonic()
+            if now - _RECENT_URL_OPEN.get(link, -1e12) < _APP_DISPATCH_COOLDOWN:
+                return {'status':'already_requested','url':link,
+                        'message':'This website was opened recently. Reuse the existing tab, do not open another.'}
+            worked=opener(link)
+            if worked:
+                _RECENT_URL_OPEN[link]=now
+                if len(_RECENT_URL_OPEN)>100:
+                    _RECENT_URL_OPEN.clear()
+                    _RECENT_URL_OPEN[link]=now
+    else:
+        worked=opener(link)
     return {'status':'opened' if worked else 'failed','url':link,
             'message':'Opened '+link if worked else 'Browser reported launch failure.',
             'elapsed_ms':round((time.perf_counter()-started)*1000)}
