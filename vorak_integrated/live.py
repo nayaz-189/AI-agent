@@ -22,15 +22,19 @@ from pathlib import Path
 
 def system_instruction():
     file = Path(__file__).resolve().parents[1] / 'vorak_personality' / 'personality.txt'
-    # Normal chat: one user turn -> one fully spoken response. No barge-in,
-    # no cross-turn merging, no "wait" special handling or scripted endings.
+    # Normal mode preserves half-duplex speech; experimental headset mode can
+    # interrupt and listen for a complete new turn. No scripted endings.
     return file.read_text(encoding='utf-8') + identity_context() + '\n' + (
         'NORMAL VOICE MODE: Have an ordinary two-person conversation. Listen to the '
         'user and respond only to a real completed utterance, not background noise, '
         'your own speech, or guessed words. Do not assume a pause means "wait". '
         'Do not combine new questions with old ones unless the user explicitly asks. '
-        'The microphone is muted while you speak; finish the whole answer before '
-        'listening again. English is the default language, including Indian-accented '
+        'In default speaker mode the microphone is muted during playback. In the '
+        'explicit headset barge-in mode, listen for an interruption and promptly '
+        'stop the previous answer. If the user says stop speaking, become silent; '
+        'if the user asks a new or continued question, listen to the complete '
+        'utterance before answering. Address two distinct questions together when '
+        'both occur in one user turn. English is the default language, including Indian-accented '
         'English. Switch languages only on explicit user request. '
         'Speak naturally, with light situational wit in casual conversation and '
         'precise, useful detail during technical work. Avoid canned helpdesk phrases. '
