@@ -73,7 +73,12 @@ def _verification_handoff(page):
             'url':page.url,
             'message':('Human verification is required. I will keep this browser page open. '
                        'Please complete the check yourself, then tell me to continue. '
-                       'I cannot automatically solve or bypass it.')}
+                       'I cannot automatically solve or bypass it.'),
+            'research_alternative': ('For a read-only public-information request, use '
+                                     'current_information(kind=search) to discover '
+                                     'independent sources. This does NOT complete '
+                                     'the blocked page or establish its Google ranking.'),
+            'requires_user_verification_for_this_page': True}
 
 
 def execute(page, action, *, url='',role='',name='',text=''):
