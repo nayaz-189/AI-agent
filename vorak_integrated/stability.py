@@ -128,6 +128,22 @@ class AudioSink:
         if self.dropped or self.q.unfinished_tasks:
             print('VOICE AUDIO WARNING: Some speech may have been lost or truncated.', flush=True)
 
+    def abort(self):
+        """Interrupt audible playback; drop remaining queued audio immediately.
+
+        The currently writing PCM chunk may finish, but no subsequent chunks
+        should play. This cannot interrupt a remote OS or network operation.
+        """
+        self.stop.set()
+        while True:
+            try:
+                self.q.get_nowait()
+                self.q.task_done()
+            except queue.Empty:
+                break
+        if self.thread.is_alive():
+            self.thread.join(timeout=0.12)
+
     def close(self):
         self.stop.set()
         try: self.q.put_nowait(None)
