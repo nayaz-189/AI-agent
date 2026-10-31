@@ -95,6 +95,7 @@ async def run_session(client,profile,args):
     from google.genai import types
     import sounddevice as sd
     voice=resolve_vorak_voice(profile,None)
+    barge_in = bool(args.barge_in)
     mic_id=args.mic_device if args.mic_device is not None else sd.default.device[0]
     if mic_id is not None and int(mic_id) >= 0:
         label=str(sd.query_devices(int(mic_id)).get('name','')).casefold()
@@ -105,7 +106,12 @@ async def run_session(client,profile,args):
        'input_audio_transcription':({'language_codes':['en-US']} if args.stt_language == 'english' else {}),
        'output_audio_transcription':{},'tools':[TOOL],
        # Normal server VAD (~800 ms default), but disallow mid-reply interruption.
-       'realtime_input_config': {'activity_handling':types.ActivityHandling.NO_INTERRUPTION}}
+       'realtime_input_config': ({
+            'activity_handling': types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+            'automatic_activity_detection': {
+                'silence_duration_ms': 1450,
+                'start_of_speech_sensitivity': types.StartSensitivity.START_SENSITIVITY_LOW}}
+            if barge_in else {'activity_handling': types.ActivityHandling.NO_INTERRUPTION})}
     audio_queue=queue.Queue(maxsize=64)
     guard=AudioGuard(mode=args.audio_mode, threshold=args.mic_threshold)
     transcript_guard=TranscriptGuard(guard)
@@ -142,20 +148,24 @@ async def run_session(client,profile,args):
                         await session.send_realtime_input(audio=types.Blob(data=data,mime_type='audio/pcm;rate=16000'))
         async def receiver():
             output=None
-            async def finish_spoken_answer():
+            async def finish_spoken_answer(interrupted=False):
                 nonlocal output
                 # The user has chosen normal non-interruptible turn-taking.
                 # Wait for actual speaker playback before reopening the microphone.
                 if output is not None:
                     try:
-                        await output.drain(max_wait=45.0)
+                        if interrupted:
+                            output.abort()
+                        else:
+                            await output.drain(max_wait=45.0)
                     finally:
                         output.close()
                         output=None
                 guard.set_playback(False)
-                # Flush buffered acoustic echo and the speaker's hardware tail.
-                await asyncio.sleep(0.35)
-                clear_mic_queue()
+                # Preserve in-flight user speech during headset barge-in.
+                if not barge_in:
+                    await asyncio.sleep(0.35)
+                    clear_mic_queue()
                 if not stop.is_set() and not SHUTDOWN.is_set() and not changed['profile']:
                     microphone_enabled.set()
 
@@ -291,14 +301,16 @@ async def run_session(client,profile,args):
                             if transcript_guard.accept_user(heard):
                                 user_chunks.append(heard)
                         if content.output_transcription and content.output_transcription.text:
-                            microphone_enabled.clear()
-                            clear_mic_queue()
+                            if not barge_in:
+                                microphone_enabled.clear()
+                                clear_mic_queue()
                             said=content.output_transcription.text.strip()
                             assistant_chunks.append(said)
                             transcript_guard.hear_assistant(said)
                         if content.model_turn:
-                            microphone_enabled.clear()
-                            clear_mic_queue()
+                            if not barge_in:
+                                microphone_enabled.clear()
+                                clear_mic_queue()
                             for part in content.model_turn.parts or []:
                                 blob=getattr(part,'inline_data',None)
                                 if blob is not None and blob.data:
@@ -308,9 +320,8 @@ async def run_session(client,profile,args):
                                         guard.set_playback(True)
                                     output.write(bytes(blob.data))
                         if getattr(content,'interrupted',False):
-                            # Ignore barge-in logic. If a legacy server sends an
-                            # interruption event, finish queued audio and reset.
-                            await finish_spoken_answer()
+                            # A newly detected user turn must discard any queued answer.
+                            await finish_spoken_answer(interrupted=True)
                             emit_turn()
                         if content.turn_complete:
                             emit_turn()
@@ -372,10 +383,13 @@ def main():
     p.add_argument('--profile',choices=sorted(NAMES),default='alex')
     p.add_argument('--mic-device',type=int);p.add_argument('--speaker-device',type=int)
     p.add_argument('--audio-mode',choices=('speakers','headset'),default='speakers')
+    p.add_argument('--barge-in',action='store_true',help='Experimental voice interruption (headset only).')
     p.add_argument('--mic-threshold',type=float,default=0.004)
     p.add_argument('--pause-seconds',type=float,default=None,help=argparse.SUPPRESS)  # ignored; legacy only
     p.add_argument('--stt-language',choices=('english','auto'),default='english')
     args=p.parse_args()
+    if args.barge_in and args.audio_mode != 'headset':
+        p.error('--barge-in requires --audio-mode headset to avoid speaker echo')
     if not 0.001 <= args.mic_threshold <= 0.05:
         p.error('--mic-threshold must be between 0.001 and 0.05')
     try:run_interruptibly(run(args))
