@@ -209,6 +209,8 @@ async def run_session(client,profile,args):
                 nonlocal output,drain_task,drain_sink
                 if output is None:
                     return
+                if drain_sink is not None:
+                    await interrupt_draining()
                 sink=output
                 output=None
                 drain_sink=sink
@@ -432,6 +434,8 @@ async def run_session(client,profile,args):
                                     if not gate.should_play():
                                         continue
                                     if output is None:
+                                        if drain_sink is not None:
+                                            await interrupt_draining()
                                         output=AudioSink(sd,device=args.speaker_device)
                                         output.start()
                                         guard.set_playback(True)
