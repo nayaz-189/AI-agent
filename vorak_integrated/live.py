@@ -318,7 +318,8 @@ async def run_session(client,profile,args):
                                     result={'status':'speech_paused','message':'Conversation is in a listening window; defer non-control calls until it ends.'}
                                 elif fc.name=='conversation_control':
                                     action=str(opts.get('action') or '').lower()
-                                    if pause_timer is not None:
+                                    if pause_timer is not None and (action in ('stop','continue') or
+                                            (action=='pause' and gate.mode!='holding')):
                                         pause_timer.cancel()
                                         pause_timer=None
                                     if action=='stop':
