@@ -94,7 +94,9 @@ def execute(page, action, *, url='',role='',name='',text=''):
             if human_verification(page):return _verification_handoff(page)
             return {'status':'already_open' if already_open else 'opened',
                     'url':page.url,'title':page.title()[:120]}
-        except Exception as exc:return {'status':'failed','message':'Navigation failed: '+type(exc).__name__}
+        except Exception as exc:
+            return {'status':'unknown','message':('Navigation outcome is uncertain ('+type(exc).__name__+
+                    '). Inspect the existing page before retrying; do not reopen automatically.' )}
     if _protected_page(page):return {'status':'blocked','message':'Protected browser page; no inspection or action.'}
     if human_verification(page):return _verification_handoff(page)
     if action=='resume':
@@ -132,7 +134,9 @@ def execute(page, action, *, url='',role='',name='',text=''):
         if human_verification(page):return _verification_handoff(page)
         return {'status':'attempted_unverified','message':'Clicked control; check page state with inspect.',
                 'url':page.url}
-    except Exception as exc:return {'status':'failed','message':'Browser control failed: '+type(exc).__name__}
+    except Exception as exc:
+        return {'status':'unknown','message':('Browser control outcome is uncertain ('+type(exc).__name__+
+                '). Inspect the existing page; do not blindly repeat the action.')}
 
 
 class BrowserWorker:
@@ -202,7 +206,7 @@ class BrowserWorker:
         try:
             self._jobs.put((result,dict(action=action,url=url,role=role,name=name,text=text)),timeout=1)
             return result.get(timeout=22)
-        except queue.Empty:return {'status':'timeout','message':'Browser operation did not finish.'}
+        except queue.Empty:return {'status':'unknown','message':'Browser operation timed out. It may still finish; do not retry blindly.'}
         except queue.Full:return {'status':'busy','message':'Browser task queue full.'}
 
 
