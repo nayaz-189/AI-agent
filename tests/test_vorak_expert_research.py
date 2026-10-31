@@ -65,7 +65,7 @@ class IntegrationTests(TestCase):
         value = current_research.lookup("time")
         self.assertEqual(value["status"], "ok")
         self.assertEqual(value["timezone"], "Asia/Kolkata")
-        self.assertRegex(value["formatted"], r"^\\d{2}:\\d{2} [AP]M$")
+        self.assertRegex(value["formatted"], r"^\d{2}:\d{2} [AP]M$")
 
     def test_live_session_preserved(self):
         s = (Path(__file__).resolve().parents[1] / "vorak_integrated" / "live.py").read_text(encoding="utf-8")
