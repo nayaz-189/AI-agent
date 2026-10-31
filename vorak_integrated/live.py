@@ -9,7 +9,7 @@ import threading
 from vorak_integrated.stability import owner_confirmation, bounded_daemon_call, AudioSink, run_interruptibly, SHUTDOWN
 from vorak_integrated.voice_guard import AudioGuard, TranscriptGuard  # VORAK_AUDIO_TURNGUARD_V5
 from vorak_integrated.actions import open_target
-from vorak_integrated.conversation_control import ConversationGate, is_stop_utterance
+from vorak_integrated.conversation_control import ConversationGate, is_stop_utterance, parse_pause_utterance
 # TurnLedger/VOICE_POLICY removed from live path: ordinary conversation  # VORAK_NORMAL_CHAT_V7
 from vorak_integrated.knowledge_bridge import search as search_engineering_knowledge
 from vorak_integrated.privacy import capture_safe_screen, SENSITIVE
@@ -168,6 +168,11 @@ async def run_session(client,profile,args):
                 except queue.Full: pass
     async with client.aio.live.connect(model=MODEL,config=config) as session:
         print('CONNECTED. VORAK voice:',profile,'(',voice,'). Continuous microphone. Ctrl+C to stop.',flush=True)
+        print(('INTERRUPT: headset barge-in enabled; say V stop or press Ctrl+Alt+S.'
+              if barge_in else
+              'INTERRUPT: speaker mode mutes mic during playback. Spoken stop will NOT work mid-answer; '
+              'press Ctrl+Alt+S to silence immediately. For voice interruption connect headphones and '
+              'use --audio-mode headset --barge-in.'),flush=True)
         async def sender():
             with sd.RawInputStream(samplerate=16000,channels=1,dtype='int16',blocksize=640,
                                    device=args.mic_device,callback=callback):
@@ -251,6 +256,29 @@ async def run_session(client,profile,args):
                 except Exception as exc:
                     print('CONVERSATION RESUME ERROR:',type(exc).__name__,flush=True)
 
+            async def local_emergency_hotkey():
+                # Windows-only global key state; no extra dependency or model round trip.
+                # Ctrl+Alt+S silences playback even when speaker-mode mic is muted.
+                if sys.platform!='win32':
+                    return
+                try:
+                    import ctypes
+                    state=ctypes.windll.user32.GetAsyncKeyState
+                except (AttributeError,OSError):
+                    return
+                held=False
+                while not stop.is_set() and not SHUTDOWN.is_set():
+                    pressed=all(bool(state(key)&0x8000) for key in (0x11,0x12,0x53))
+                    if pressed and not held:
+                        gate.stop()
+                        if pause_timer is not None:
+                            pause_timer.cancel()
+                        await interrupt_draining()
+                        await finish_spoken_answer(interrupted=True)
+                        print('CONVERSATION: speech_stopped (Ctrl+Alt+S)',flush=True)
+                    held=pressed
+                    await asyncio.sleep(0.045)
+
             # Server transcription can arrive in partial chunks; print only one
             # complete paragraph per conversational turn, not each audio packet.
             user_chunks=[]
@@ -264,6 +292,7 @@ async def run_session(client,profile,args):
                 if assistant_chunks:
                     print('VORAK:', tidy(assistant_chunks), flush=True)
                     assistant_chunks.clear()
+            hotkey_task=asyncio.create_task(local_emergency_hotkey())
             try:
                 while not stop.is_set() and not SHUTDOWN.is_set():
                     async for msg in session.receive():
@@ -296,10 +325,13 @@ async def run_session(client,profile,args):
                                     elif action=='pause':
                                         try: seconds=int(opts.get('seconds',10))
                                         except (TypeError,ValueError):seconds=-1
-                                        result=gate.hold(seconds)
-                                        if result['status']=='speech_paused':
-                                            pause_timer=asyncio.create_task(
-                                                resume_after_hold(gate.generation,seconds))
+                                        if gate.mode=='holding':
+                                            result={'status':'already_paused','message':'Existing listening timer remains active.'}
+                                        else:
+                                            result=gate.hold(seconds)
+                                            if result['status']=='speech_paused':
+                                                pause_timer=asyncio.create_task(
+                                                    resume_after_hold(gate.generation,seconds))
                                     elif action=='continue':
                                         result=gate.resume()
                                     else:
@@ -415,7 +447,18 @@ async def run_session(client,profile,args):
                                     await finish_spoken_answer(interrupted=True)
                                     print('CONVERSATION: speech stopped by spoken command.',flush=True)
                                 else:
-                                    gate.new_user_utterance(heard)
+                                    seconds=parse_pause_utterance(heard)
+                                    if seconds is not None and gate.mode!='holding':
+                                        gate.hold(seconds)
+                                        if pause_timer is not None:
+                                            pause_timer.cancel()
+                                        pause_timer=asyncio.create_task(
+                                            resume_after_hold(gate.generation,seconds))
+                                        await interrupt_draining()
+                                        await finish_spoken_answer(interrupted=True)
+                                        print('CONVERSATION: speech_paused',seconds,'seconds (local)',flush=True)
+                                    elif seconds is None:
+                                        gate.new_user_utterance(heard)
                         if content.output_transcription and content.output_transcription.text:
                             if not barge_in and gate.should_play():
                                 microphone_enabled.clear()
@@ -457,6 +500,8 @@ async def run_session(client,profile,args):
                     raise
             finally:
                 emit_turn()
+                hotkey_task.cancel()
+                await asyncio.gather(hotkey_task,return_exceptions=True)
                 if pause_timer is not None:
                     pause_timer.cancel()
                 await interrupt_draining()
