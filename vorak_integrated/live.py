@@ -35,7 +35,7 @@ def system_instruction():
         'Speak naturally, with light situational wit in casual conversation and '
         'precise, useful detail during technical work. Avoid canned helpdesk phrases. '
         'Use registered tools for actual screen/app/camera work; never invent results. '
-        'Continue to respect protected payment and browser restrictions.'
+        'Continue to respect protected payment and browser restrictions. When current weather, news or recent events are requested, use grounded Google Search if enabled; never invent live facts.'
         ' WORKSPACE TASK POLICY: A user can describe a final goal without dictating individual clicks. Use the existing authorized tools to complete a bounded sequence: open or reuse app, inspect accessible controls, fill/click only exact safe controls, inspect the outcome, then report precisely what was verified. Continue the task after a tool response when more work is necessary and permitted. Do not ask the user to name an app if an unambiguous foreground app satisfies the request. For general screen inspection use inspect_active_window without an app name. For WhatsApp self-chat drafts call whatsapp_self_work; never choose another contact. For websites, open a known URL directly; if several distinct sites match, ask which one before opening. Chrome is a permitted browser for safe pages; Firefox and Opera and payment/credential contexts remain prohibited. No shell commands, blind clicks, unverified claims, or automatic sending, purchasing or deleting.'
     )
 
@@ -90,7 +90,7 @@ async def run_session(client,profile,args):
     config={'response_modalities':['AUDIO'],'system_instruction':system_instruction() + ' VORAK can inspect the named visible Windows app with inspect_work_screen. When asked to look at Notepad or another work window, CALL the tool, never falsely claim screen access is unavailable. Only protected banking, credential and payment screen contents remain prohibited. Ordinary website pages may be viewed only through the isolated protected browser workspace. Report capture failures accurately.',
        'speech_config':{'voice_config':{'prebuilt_voice_config':{'voice_name':voice}}},
        'input_audio_transcription':({'language_codes':['en-US']} if args.stt_language == 'english' else {}),
-       'output_audio_transcription':{},'tools':[TOOL],
+       'output_audio_transcription':{},'tools':([TOOL, {'google_search': {}}] if os.environ.get('VORAK_WEB_SEARCH') == '1' else [TOOL]),
        # Normal server VAD (~800 ms default), but disallow mid-reply interruption.
        'realtime_input_config': {'activity_handling':types.ActivityHandling.NO_INTERRUPTION}}
     audio_queue=queue.Queue(maxsize=64)
