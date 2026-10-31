@@ -17,6 +17,22 @@ def is_stop_utterance(transcript: str) -> bool:
     return bool(_STOP_WORDS.fullmatch(' '.join(str(transcript or '').strip().split())))
 
 
+_PAUSE_WORDS = re.compile(
+    r"(?i)^(?:hey[, ]+)?(?:v(?:orak)?[,]?\s+)?(?:please\s+)?"
+    r"(?:pause|wait|give\s+me|hold\s+on)\s+(?:for\s+)?"
+    r"(10|20|30|ten|twenty|thirty)\s*(?:seconds?|secs?)\b"
+)
+_PAUSE_NUMBERS = {"10": 10, "ten": 10, "20": 20, "twenty": 20,
+                  "30": 30, "thirty": 30}
+
+
+def parse_pause_utterance(transcript: str) -> int | None:
+    """Only an explicit turn-opening request, not an arbitrary mention of time."""
+    text = ' '.join(str(transcript or '').strip().split())
+    m = _PAUSE_WORDS.match(text)
+    return _PAUSE_NUMBERS.get(m.group(1).casefold()) if m else None
+
+
 @dataclass
 class ConversationGate:
     """State transitions are safe to evaluate in the asyncio receiver loop."""
