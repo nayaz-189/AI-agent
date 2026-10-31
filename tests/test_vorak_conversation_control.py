@@ -75,6 +75,20 @@ class SpeechGateTests(TestCase):
         self.assertIn('No task was cancelled',result['message'])
 
 
+class GeminiSchemaTests(TestCase):
+    def test_gemini_live_tool_declarations_validate_without_connecting(self):
+        from google.genai import types
+        from vorak_integrated.live import TOOL
+        config = types.LiveConnectConfig(tools=[TOOL])
+        declaration = next(
+            d for d in config.tools[0].function_declarations
+            if d.name == 'conversation_control'
+        )
+        seconds = declaration.parameters.properties['seconds']
+        self.assertEqual(seconds.type.value if hasattr(seconds.type, 'value') else str(seconds.type), 'STRING')
+        self.assertEqual(seconds.enum, ['10', '20', '30'])
+
+
 class LiveWiringTests(TestCase):
     @classmethod
     def setUpClass(cls):
