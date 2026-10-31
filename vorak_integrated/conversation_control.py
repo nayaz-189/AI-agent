@@ -13,6 +13,10 @@ _STOP_WORDS = re.compile(
     r"(?i)^(?:hey\s+)?(?:v(?:orak)?[,\s]+)?(?:stop(?:\s+(?:speaking|talking|the\s+answer))?|be\s+quiet|shut\s+up)[.!\s]*$"
 )
 
+def is_stop_utterance(transcript: str) -> bool:
+    return bool(_STOP_WORDS.fullmatch(' '.join(str(transcript or '').strip().split())))
+
+
 @dataclass
 class ConversationGate:
     """State transitions are safe to evaluate in the asyncio receiver loop."""
@@ -59,7 +63,7 @@ class ConversationGate:
         if self.mode != "stopped":
             return False
         value = " ".join(str(transcript or "").strip().split())
-        if len(value) < 4 or _STOP_WORDS.fullmatch(value):
+        if len(value) < 4 or is_stop_utterance(value):
             return False
         self.resume()
         return True
