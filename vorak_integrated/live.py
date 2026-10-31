@@ -173,6 +173,8 @@ async def run_session(client,profile,args):
         async def receiver():
             output=None
             pause_timer=None
+            drain_task=None
+            drain_sink=None
             async def finish_spoken_answer(interrupted=False):
                 nonlocal output
                 # The user has chosen normal non-interruptible turn-taking.
@@ -193,6 +195,32 @@ async def run_session(client,profile,args):
                     clear_mic_queue()
                 if not stop.is_set() and not SHUTDOWN.is_set() and not changed['profile']:
                     microphone_enabled.set()
+
+            async def begin_background_drain():
+                # Do not block receiving Gemini interruptions while speech plays.
+                nonlocal output,drain_task,drain_sink
+                if output is None:
+                    return
+                sink=output
+                output=None
+                drain_sink=sink
+                async def worker():
+                    try:
+                        await sink.drain(max_wait=45.0)
+                    finally:
+                        sink.close()
+                        guard.set_playback(False)
+                drain_task=asyncio.create_task(worker())
+
+            async def interrupt_draining():
+                nonlocal drain_task,drain_sink
+                if drain_sink is not None:
+                    drain_sink.abort()
+                    drain_sink=None
+                if drain_task is not None:
+                    drain_task.cancel()
+                    await asyncio.gather(drain_task,return_exceptions=True)
+                    drain_task=None
 
             async def resume_after_hold(token,seconds):
                 try:
@@ -236,8 +264,10 @@ async def run_session(client,profile,args):
                                 print('YOU:', tidy(user_chunks), flush=True)
                                 user_chunks.clear()
                             microphone_enabled.clear()
+                            immediate=any(fc.name=='conversation_control' for fc in (msg.tool_call.function_calls or []))
+                            if immediate:
+                                await interrupt_draining()
                             if output:
-                                immediate=any(fc.name=='conversation_control' for fc in (msg.tool_call.function_calls or []))
                                 await finish_spoken_answer(interrupted=immediate)
                             microphone_enabled.clear()
                             clear_mic_queue()
@@ -371,12 +401,13 @@ async def run_session(client,profile,args):
                                     gate.stop()
                                     if pause_timer is not None:
                                         pause_timer.cancel();pause_timer=None
+                                    await interrupt_draining()
                                     await finish_spoken_answer(interrupted=True)
                                     print('CONVERSATION: speech stopped by spoken command.',flush=True)
                                 else:
                                     gate.new_user_utterance(heard)
                         if content.output_transcription and content.output_transcription.text:
-                            if not barge_in:
+                            if not barge_in and gate.should_play():
                                 microphone_enabled.clear()
                                 clear_mic_queue()
                             said=content.output_transcription.text.strip()
@@ -384,7 +415,7 @@ async def run_session(client,profile,args):
                                 assistant_chunks.append(said)
                                 transcript_guard.hear_assistant(said)
                         if content.model_turn:
-                            if not barge_in:
+                            if not barge_in and gate.should_play():
                                 microphone_enabled.clear()
                                 clear_mic_queue()
                             for part in content.model_turn.parts or []:
@@ -399,11 +430,15 @@ async def run_session(client,profile,args):
                                     output.write(bytes(blob.data))
                         if getattr(content,'interrupted',False):
                             # A newly detected user turn must discard any queued answer.
+                            await interrupt_draining()
                             await finish_spoken_answer(interrupted=True)
                             emit_turn()
                         if content.turn_complete:
                             emit_turn()
-                            await finish_spoken_answer()
+                            if barge_in:
+                                await begin_background_drain()
+                            else:
+                                await finish_spoken_answer()
                     if changed['profile']:break
             except Exception as error:
                 if not (SHUTDOWN.is_set() and ("1000" in str(error) or "ConnectionClosedOK" in type(error).__name__)):
@@ -412,6 +447,7 @@ async def run_session(client,profile,args):
                 emit_turn()
                 if pause_timer is not None:
                     pause_timer.cancel()
+                await interrupt_draining()
                 if output:output.close()
                 guard.set_playback(False)
         tasks=[asyncio.create_task(sender()),asyncio.create_task(receiver())]
