@@ -12,6 +12,10 @@ import webbrowser
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+_RECENT_APP_DISPATCH = {}
+_RECENT_APP_LOCK = threading.Lock()
+_APP_DISPATCH_COOLDOWN = 20.0  # avoid repeated launches during one voice task
+
 KNOWN = {'google':'https://www.google.com','youtube':'https://www.youtube.com',
          'github':'https://github.com','gmail':'https://mail.google.com',
          'whatsapp web':'https://web.whatsapp.com','chatgpt':'https://chatgpt.com'}
@@ -120,8 +124,24 @@ def launch_app(name, confirm=None, resolver=None, gate_factory=None):  # VORAK_A
         if confirm is None or not confirm('Launch '+app['name']+'?'):
             return {'status':'cancelled','message':'Launch cancelled by owner.'}
         token=gate.confirmation_authority.issue(request).token
-    outcome=gate.execute(request,confirmation_token=token)
+    # Repeated Live function calls must not reopen the same application.
+    # Reserve before dispatch so concurrent calls cannot launch duplicates.
+    launch_key=(app['launch_type'],app['launch_target'])
+    with _RECENT_APP_LOCK:
+        now=time.monotonic()
+        if now - _RECENT_APP_DISPATCH.get(launch_key,-1e12) < _APP_DISPATCH_COOLDOWN:
+            return {'status':'already_requested',
+                    'message':'Application launch was already dispatched recently. Reuse or inspect the existing window; do not reopen it.'}
+        _RECENT_APP_DISPATCH[launch_key]=now
+    try:
+        outcome=gate.execute(request,confirmation_token=token)
+    except Exception:
+        with _RECENT_APP_LOCK:
+            _RECENT_APP_DISPATCH.pop(launch_key,None)
+        raise
     if not outcome.get('success'):
+        with _RECENT_APP_LOCK:
+            _RECENT_APP_DISPATCH.pop(launch_key,None)
         return {'status':'failed','message':str(outcome.get('error') or 'Launch failed.')}
     is_web_app = str(app.get('launch_target','')).casefold().startswith('chrome._crx_')
     kind='Chrome-installed web app shortcut' if is_web_app else 'installed application'
